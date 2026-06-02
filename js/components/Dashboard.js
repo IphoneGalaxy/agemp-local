@@ -89,7 +89,7 @@
                                     const remaining = Math.max(0, bank.totalToPay - totalPaid);
                                     const bd = globalStats.bankDetails?.find(b => b.name === bank.name);
                                     const juros = bd ? bd.interestFromClients : 0;
-                                    const paidInst = bp.filter(p => p.type === 'installment').length;
+                                    const paidInst = Math.floor(totalPaid / bank.installmentValue);
                                     const remainingInst = Math.max(0, bank.totalInstallments - paidInst);
                                     const payoffMonths = remainingInst > 0 && bank.installmentValue > 0 ? Math.ceil(remaining / bank.installmentValue) : 0;
                                     const payoffDate = payoffMonths > 0 ? new Date(new Date().setMonth(new Date().getMonth() + payoffMonths)).toLocaleString('pt-BR', { month: 'short', year: 'numeric' }) : '—';

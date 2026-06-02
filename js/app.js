@@ -359,6 +359,18 @@
                 };
             }, [clients, fundsTransactions, currentMonth, currentYear, nextMonth, nextYear]);
 
+            // Auto-alimenta amortizationFund com juros de clientes vinculados a bancos
+            useEffect(() => {
+                if (globalStats.bankDetails?.length > 0) {
+                    setCapitalSources(prev => prev.map(s => {
+                        if (s.type !== 'bank') return s;
+                        const bd = globalStats.bankDetails.find(b => b.name === s.name);
+                        if (!bd) return s;
+                        return { ...s, amortizationFund: Math.max(s.amortizationFund || 0, bd.interestFromClients) };
+                    }));
+                }
+            }, [globalStats.bankDetails]);
+
 
             const state = { globalStats, capitalSources, clients, fundsTransactions, bankPayments };
             const actions = { setFundsTransactions, setCapitalSources, setBankPayments, setClients, setSelectedClient };
