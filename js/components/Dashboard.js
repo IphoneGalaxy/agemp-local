@@ -35,30 +35,92 @@
                 return (
                     <div className="p-4 space-y-6 pb-20">
                         {/* Cards Principais */}
-                        <div className="grid grid-cols-2 gap-4">
-                            <div data-testid="dash-total-disponivel" className="bg-blue-600 text-white rounded-2xl p-5 shadow-lg relative overflow-hidden">
-                                <p className="text-blue-100 text-sm font-medium relative z-10">Total Disponível</p>
-                                <p className="text-2xl font-bold mt-1 relative z-10">{formatMoney(globalStats.availableMoney)}</p>
-                            </div>
-                            <div data-testid="dash-total-na-rua" className="bg-orange-500 text-white rounded-2xl p-5 shadow-lg relative overflow-hidden">
-                                <p className="text-orange-100 text-sm font-medium relative z-10">Total na Rua</p>
-                                <p className="text-2xl font-bold mt-1 relative z-10">{formatMoney(globalStats.totalLent)}</p>
-                            </div>
-                        </div>
-
-                        {/* Lucro Real vs Capital Comprometido */}
-                        {capitalSources.some(s => s.type === 'bank') && (
+                        {!capitalSources.some(s => s.type === 'bank') ? (
                             <div className="grid grid-cols-2 gap-4">
-                                <div data-testid="dash-lucro-real" className="bg-green-600 text-white rounded-2xl p-5 shadow-lg relative overflow-hidden">
-                                    <p className="text-green-100 text-sm font-medium relative z-10">Lucro Real</p>
-                                    <p className="text-2xl font-bold mt-1 relative z-10">{formatMoney(globalStats.realProfit)}</p>
-                                    <p className="text-green-200 text-[10px] mt-1 relative z-10">Juros próprios: {formatMoney(globalStats.ownInterestReceived)}</p>
+                                <div data-testid="dash-total-disponivel" className="bg-blue-600 text-white rounded-2xl p-5 shadow-lg relative overflow-hidden">
+                                    <p className="text-blue-100 text-sm font-medium relative z-10">Total Disponível</p>
+                                    <p className="text-2xl font-bold mt-1 relative z-10">{formatMoney(globalStats.availableMoney)}</p>
                                 </div>
-                                <div data-testid="dash-capital-comprometido" className="bg-yellow-500 text-white rounded-2xl p-5 shadow-lg relative overflow-hidden">
-                                    <p className="text-yellow-100 text-sm font-medium relative z-10">Capital Comprometido</p>
-                                    <p className="text-2xl font-bold mt-1 relative z-10">{formatMoney(globalStats.committedCapital)}</p>
-                                    <p className="text-yellow-200 text-[10px] mt-1 relative z-10">Juros reservados p/ bancos</p>
+                                <div data-testid="dash-total-na-rua" className="bg-orange-500 text-white rounded-2xl p-5 shadow-lg relative overflow-hidden">
+                                    <p className="text-orange-100 text-sm font-medium relative z-10">Total na Rua</p>
+                                    <p className="text-2xl font-bold mt-1 relative z-10">{formatMoney(globalStats.totalLent)}</p>
                                 </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {/* Capital Próprio */}
+                                {(() => {
+                                    const ownBalance = getCapitalBalance('own-default');
+                                    let ownNaRua = 0;
+                                    clients.forEach(c => {
+                                        (c.loans || []).forEach(l => {
+                                            if (l.sourceId) return; // só capital próprio (sem sourceId)
+                                            let principal = l.amount;
+                                            const sorted = [...(l.payments || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+                                            sorted.forEach(p => {
+                                                const rate = (l.interestRate || 10) / 100;
+                                                const due = principal * rate;
+                                                principal -= (p.amount >= due ? p.amount - due : 0);
+                                                if (principal < 0) principal = 0;
+                                            });
+                                            ownNaRua += principal;
+                                        });
+                                    });
+                                    return (
+                                        <div data-testid="dash-capital-proprio" className="bg-blue-600 text-white rounded-2xl p-5 shadow-lg">
+                                            <p className="text-blue-100 text-sm font-medium">💰 Capital Próprio</p>
+                                            <div className="grid grid-cols-2 gap-3 mt-3">
+                                                <div>
+                                                    <p className="text-blue-200 text-[10px] uppercase">Disponível</p>
+                                                    <p className="text-xl font-bold">{formatMoney(ownBalance)}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-blue-200 text-[10px] uppercase">Emprestado</p>
+                                                    <p className="text-xl font-bold">{formatMoney(ownNaRua)}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+                                {/* Cada Banco */}
+                                {capitalSources.filter(s => s.type === 'bank').map(bank => {
+                                    const bp = bankPayments.filter(p => p.sourceId === bank.id);
+                                    const totalPaid = bp.reduce((a, p) => a + p.amount, 0);
+                                    const remaining = Math.max(0, bank.totalToPay - totalPaid);
+                                    const bd = globalStats.bankDetails?.find(b => b.name === bank.name);
+                                    const juros = bd ? bd.interestFromClients : 0;
+                                    const paidInst = bp.filter(p => p.type === 'installment').length;
+                                    const remainingInst = Math.max(0, bank.totalInstallments - paidInst);
+                                    const payoffMonths = remainingInst > 0 && bank.installmentValue > 0 ? Math.ceil(remaining / bank.installmentValue) : 0;
+                                    const payoffDate = payoffMonths > 0 ? new Date(new Date().setMonth(new Date().getMonth() + payoffMonths)).toLocaleString('pt-BR', { month: 'short', year: 'numeric' }) : '—';
+                                    return (
+                                        <div key={bank.id} data-testid="dash-card-banco" className="bg-purple-600 text-white rounded-2xl p-5 shadow-lg">
+                                            <p className="text-purple-100 text-sm font-medium">🏦 {bank.name}</p>
+                                            <div className="grid grid-cols-2 gap-3 mt-3 text-center">
+                                                <div className="bg-purple-500/50 rounded-lg p-2">
+                                                    <p className="text-purple-200 text-[10px]">Dívida Restante</p>
+                                                    <p className="font-bold">{formatMoney(remaining)}</p>
+                                                </div>
+                                                <div className="bg-purple-500/50 rounded-lg p-2">
+                                                    <p className="text-purple-200 text-[10px]">Juros Gerados</p>
+                                                    <p className="font-bold">{formatMoney(juros)}</p>
+                                                </div>
+                                                <div className="bg-purple-500/50 rounded-lg p-2">
+                                                    <p className="text-purple-200 text-[10px]">Fundo Amort.</p>
+                                                    <p className="font-bold">{formatMoney(bank.amortizationFund || 0)}</p>
+                                                </div>
+                                                <div className="bg-purple-500/50 rounded-lg p-2">
+                                                    <p className="text-purple-200 text-[10px]">Parcelas</p>
+                                                    <p className="font-bold">{paidInst}/{bank.totalInstallments}</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-between text-[10px] text-purple-200 mt-2">
+                                                <span>Próx: {formatMoney(bank.installmentValue)}</span>
+                                                <span>Previsão: {payoffDate}</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
 
