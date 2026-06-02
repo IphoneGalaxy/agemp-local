@@ -90,6 +90,8 @@
                                     const bd = globalStats.bankDetails?.find(b => b.name === bank.name);
                                     const juros = bd ? bd.interestFromClients : 0;
                                     const paidInst = Math.floor(totalPaid / bank.installmentValue);
+                                    const remainderCredit = totalPaid - (paidInst * bank.installmentValue);
+                                    const shortfall = bank.installmentValue - remainderCredit;
                                     const remainingInst = Math.max(0, bank.totalInstallments - paidInst);
                                     const payoffMonths = remainingInst > 0 && bank.installmentValue > 0 ? Math.ceil(remaining / bank.installmentValue) : 0;
                                     const payoffDate = payoffMonths > 0 ? new Date(new Date().setMonth(new Date().getMonth() + payoffMonths)).toLocaleString('pt-BR', { month: 'short', year: 'numeric' }) : '—';
@@ -111,7 +113,7 @@
                                                 </div>
                                                 <div className="bg-purple-500/50 rounded-lg p-2">
                                                     <p className="text-purple-200 text-[10px]">Parcelas</p>
-                                                    <p className="font-bold">{paidInst}/{bank.totalInstallments}</p>
+                                                    <p className="font-bold">{paidInst}/{bank.totalInstallments}{remainderCredit > 0 ? <span className="text-[9px] font-normal ml-1">(+R$ {formatMoney(remainderCredit).replace('R$ ','')})</span> : null}</p>
                                                 </div>
                                             </div>
                                             <div className="flex justify-between text-[10px] text-purple-200 mt-2">
@@ -245,7 +247,7 @@
                                                 <div className="bg-gray-50 rounded-lg p-2"><p className="text-[10px] text-gray-400">Restante</p><p className="font-bold text-sm text-red-600">{formatMoney(remainingValue)}</p></div>
                                             </div>
                                             <div className="mb-2">
-                                                <div className="flex justify-between text-[10px] text-gray-500"><span>Parcelas: {paidInst}/{bank.totalInstallments}</span><span>Total: {formatMoney(bank.totalToPay)}</span></div>
+                                                <div className="flex justify-between text-[10px] text-gray-500"><span>Parcelas: {paidInst}/{bank.totalInstallments}{remainderCredit > 0 ? ' (+R$ ' + formatMoney(remainderCredit).replace('R$ ','') + ' crédito)' : ''}</span><span>Total: {formatMoney(bank.totalToPay)}</span></div>
                                                 <div className="w-full bg-gray-200 rounded-full h-2 mt-1"><div className="bg-purple-500 h-2 rounded-full transition-all" style={{ width: `${Math.min(100, (totalPaid / bank.totalToPay) * 100)}%` }}></div></div>
                                             </div>
                                             <div className="grid grid-cols-4 gap-2 text-center text-[10px] mb-3">
