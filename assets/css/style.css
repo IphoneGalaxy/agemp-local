@@ -1,0 +1,12 @@
+body { background-color: #f3f4f6; font-family: system-ui, -apple-system, sans-serif; }
+.tab-active { border-bottom: 2px solid #2563eb; color: #2563eb; font-weight: bold; }
+.hide-scroll::-webkit-scrollbar { display: none; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+@keyframes toastSlide { 
+    0% { opacity: 0; transform: translate(-50%, 20px); } 
+    10% { opacity: 1; transform: translate(-50%, 0); }
+    90% { opacity: 1; transform: translate(-50%, 0); }
+    100% { opacity: 0; transform: translate(-50%, 20px); }
+}
+.toast-anim { animation: toastSlide 3s ease-in-out forwards; }
