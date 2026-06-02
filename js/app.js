@@ -15,12 +15,36 @@
                     if (source.type === 'own') return (t.sourceId === sourceId) || (!t.sourceId && sourceId === 'own-default');
                     return t.sourceId === sourceId;
                 }).reduce((acc, t) => acc + t.amount, 0);
-                const lent = clients.reduce((total, c) => total + (c.loans || []).reduce((sum, l) => {
-                    const matchesSource = l.sourceId === sourceId || (source.type === 'own' && !l.sourceId && sourceId === 'own-default');
-                    if (!matchesSource) return sum;
-                    return sum + (l.isPaidOff ? 0 : l.amount);
-                }, 0), 0);
-                return (source.type === 'own' ? 0 : source.receivedAmount) + sourceTx - lent;
+
+                let effectivePrincipal = 0;
+                let totalInterestRecv = 0;
+                let totalAmortizedRecv = 0;
+
+                clients.forEach(c => {
+                    (c.loans || []).forEach(loan => {
+                        const matchesSource = loan.sourceId === sourceId || (source.type === 'own' && !loan.sourceId && sourceId === 'own-default');
+                        if (!matchesSource) return;
+                        let principal = loan.amount;
+                        const sorted = [...(loan.payments || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+                        sorted.forEach(p => {
+                            const rate = (loan.interestRate || 10) / 100;
+                            const interestDue = principal * rate;
+                            if (p.amount >= interestDue) {
+                                totalInterestRecv += interestDue;
+                                const amortized = p.amount - interestDue;
+                                totalAmortizedRecv += amortized;
+                                principal -= amortized;
+                            } else {
+                                totalInterestRecv += p.amount;
+                            }
+                            if (principal < 0) principal = 0;
+                        });
+                        effectivePrincipal += principal;
+                    });
+                });
+
+                const base = source.type === 'own' ? 0 : source.receivedAmount;
+                return base + sourceTx + totalInterestRecv + totalAmortizedRecv - effectivePrincipal;
             };
 
             const showToast = (message) => {

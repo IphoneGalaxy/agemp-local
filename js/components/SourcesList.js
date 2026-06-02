@@ -82,10 +82,23 @@
                         <div className="space-y-3">
                             {capitalSources.map(source => {
                                 const available = getCapitalBalance(source.id);
-                                const totalLent = clients.reduce((total, c) => total + (c.loans || []).reduce((sum, l) => {
-                                    const matchesSource = l.sourceId === source.id || (!l.sourceId && source.id === 'own-default');
-                                    return sum + (matchesSource ? l.amount : 0);
-                                }, 0), 0);
+                                let totalLent = 0;
+                                clients.forEach(c => {
+                                    (c.loans || []).forEach(loan => {
+                                        const matchesSource = loan.sourceId === source.id || (!loan.sourceId && source.id === 'own-default');
+                                        if (!matchesSource) return;
+                                        let principal = loan.amount;
+                                        const sorted = [...(loan.payments || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+                                        sorted.forEach(p => {
+                                            const rate = (loan.interestRate || 10) / 100;
+                                            const interestDue = principal * rate;
+                                            const amortized = p.amount >= interestDue ? p.amount - interestDue : 0;
+                                            principal -= amortized;
+                                            if (principal < 0) principal = 0;
+                                        });
+                                        totalLent += principal;
+                                    });
+                                });
                                 const isDeletable = totalLent === 0;
                                 return (
                                     <div key={source.id} className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
