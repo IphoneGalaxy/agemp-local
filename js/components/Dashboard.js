@@ -229,6 +229,7 @@
                                     const bp = bankPayments.filter(p => p.sourceId === bank.id);
                                     const totalPaid = bp.reduce((a, p) => a + p.amount, 0);
                                     const paidInst = Math.floor(totalPaid / bank.installmentValue);
+                                    const remainderCredit = totalPaid - (paidInst * bank.installmentValue);
                                     const remainingValue = Math.max(0, bank.totalToPay - totalPaid);
                                     const remainingInst = Math.max(0, bank.totalInstallments - paidInst);
                                     const payoffMonths = remainingInst > 0 && bank.installmentValue > 0 ? Math.ceil(remainingValue / bank.installmentValue) : 0;
