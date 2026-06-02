@@ -44,7 +44,7 @@
                 });
 
                 const base = source.type === 'own' ? 0 : source.receivedAmount;
-                return base + sourceTx + totalInterestRecv + totalAmortizedRecv - effectivePrincipal;
+                return base + sourceTx + totalInterestRecv - effectivePrincipal;
             };
 
             const showToast = (message) => {
