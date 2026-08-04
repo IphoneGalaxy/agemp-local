@@ -5,7 +5,7 @@
                 const { showToast, getCapitalBalance } = utils;
                 const [showNewLoanForm, setShowNewLoanForm] = useState(false);
                 const [newLoanAmount, setNewLoanAmount] = useState('');
-                const [newLoanDate, setNewLoanDate] = useState(new Date().toISOString().split('T')[0]);
+                const [newLoanDate, setNewLoanDate] = useState(FinanceEngine.localIsoDate(new Date()));
                 const [newLoanInterestRate, setNewLoanInterestRate] = useState('10');
                 const [newLoanSourceId, setNewLoanSourceId] = useState(() => {
                     const ownSource = capitalSources.find(s => s.type === 'own');
@@ -16,7 +16,7 @@
 
                 const [payingLoanId, setPayingLoanId] = useState(null); 
                 const [paymentAmount, setPaymentAmount] = useState('');
-                const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+                const [paymentDate, setPaymentDate] = useState(FinanceEngine.localIsoDate(new Date()));
 
                 const [confirmDeleteClient, setConfirmDeleteClient] = useState(false);
                 const [editingLoan, setEditingLoan] = useState(null); 
@@ -149,7 +149,7 @@
 
                 const generateStatement = () => {
                     let text = `*Extrato de Empréstimos - ${clientData.name}*\n`;
-                    text += `Gerado em: ${formatDate(new Date().toISOString().split('T')[0])}\n\n`;
+                    text += `Gerado em: ${formatDate(FinanceEngine.localIsoDate(new Date()))}\n\n`;
                     
                     if (clientData.loans.length === 0) text += `Nenhum contrato ativo.\n`;
 

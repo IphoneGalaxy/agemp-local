@@ -2,18 +2,22 @@
             // --- COMPONENTE PAINEL ---
             const Dashboard = ({ onExport, onImport, state, actions, utils }) => {
                 const { globalStats, capitalSources, clients, fundsTransactions, bankPayments } = state;
-                const { setFundsTransactions, setCapitalSources, setBankPayments } = actions;
-                const { showToast, getCapitalBalance } = utils;
+                const { setFundsTransactions } = actions;
+                const { showToast, getCapitalBalance, getSourceSummary } = utils;
                 const [addAmount, setAddAmount] = useState('');
-                const [selectedSourceId, setSelectedSourceId] = useState(capitalSources.length > 0 ? capitalSources[0].id : '');
+                const [selectedSourceId, setSelectedSourceId] = useState(() => FinanceEngine.getDefaultOwnSourceId(capitalSources));
                 const fileInputRef = useRef(null);
-                // Estados do Resumo Bancário
-                const [activeBankPayId, setActiveBankPayId] = useState(null);
-                const [bankPayAmountState, setBankPayAmountState] = useState('');
-                const [bankPayDateState, setBankPayDateState] = useState(new Date().toISOString().split('T')[0]);
-                const [bankPayTypeState, setBankPayTypeState] = useState('installment');
-                const [activeAmortizeId, setActiveAmortizeId] = useState(null);
-                const [amortizeAmountState, setAmortizeAmountState] = useState('');
+                const integrityIssues = FinanceEngine.findIntegrityIssues({ capitalSources, clients, fundsTransactions, bankPayments });
+                const orphanIssues = integrityIssues.filter(issue => issue.type.includes('orphan'));
+                const duplicateIssues = integrityIssues.filter(issue => issue.type === 'possible-duplicate-bank-payment');
+                const mismatchIssues = integrityIssues.filter(issue => issue.type === 'bank-funding-mismatch');
+
+                useEffect(() => {
+                    if (capitalSources.some(source => source.id === selectedSourceId)) return;
+                    const ownSourceId = FinanceEngine.getDefaultOwnSourceId(capitalSources);
+                    const fallbackId = capitalSources.find(source => source.id === ownSourceId)?.id || capitalSources[0]?.id || '';
+                    setSelectedSourceId(fallbackId);
+                }, [capitalSources, selectedSourceId]);
 
                 const handleFund = (action) => {
                     if (!addAmount || Number(addAmount) <= 0) return;
@@ -27,7 +31,7 @@
                         }
                         val = -val;
                     }
-                    setFundsTransactions([{ id: generateId(), date: new Date().toISOString().split('T')[0], amount: val, sourceId: selectedSourceId }, ...fundsTransactions]);
+                    setFundsTransactions([{ id: generateId(), date: FinanceEngine.localIsoDate(new Date()), amount: val, sourceId: selectedSourceId }, ...fundsTransactions]);
                     setAddAmount('');
                     showToast(action === 'add' ? '💰 Saldo adicionado!' : '💸 Saldo retirado!');
                 };
@@ -50,33 +54,19 @@
                             <div className="space-y-4">
                                 {/* Capital Próprio */}
                                 {(() => {
-                                    const ownBalance = getCapitalBalance('own-default');
-                                    let ownNaRua = 0;
-                                    clients.forEach(c => {
-                                        (c.loans || []).forEach(l => {
-                                            if (l.sourceId) return; // só capital próprio (sem sourceId)
-                                            let principal = l.amount;
-                                            const sorted = [...(l.payments || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
-                                            sorted.forEach(p => {
-                                                const rate = (l.interestRate || 10) / 100;
-                                                const due = principal * rate;
-                                                principal -= (p.amount >= due ? p.amount - due : 0);
-                                                if (principal < 0) principal = 0;
-                                            });
-                                            ownNaRua += principal;
-                                        });
-                                    });
+                                    const ownSourceId = FinanceEngine.getDefaultOwnSourceId(capitalSources);
+                                    const ownSummary = getSourceSummary(ownSourceId);
                                     return (
                                         <div data-testid="dash-capital-proprio" className="bg-blue-600 text-white rounded-2xl p-5 shadow-lg">
                                             <p className="text-blue-100 text-sm font-medium">💰 Capital Próprio</p>
                                             <div className="grid grid-cols-2 gap-3 mt-3">
                                                 <div>
                                                     <p className="text-blue-200 text-[10px] uppercase">Disponível</p>
-                                                    <p className="text-xl font-bold">{formatMoney(ownBalance)}</p>
+                                                    <p className="text-xl font-bold">{formatMoney(ownSummary.available)}</p>
                                                 </div>
                                                 <div>
                                                     <p className="text-blue-200 text-[10px] uppercase">Emprestado</p>
-                                                    <p className="text-xl font-bold">{formatMoney(ownNaRua)}</p>
+                                                    <p className="text-xl font-bold">{formatMoney(ownSummary.outstandingPrincipal)}</p>
                                                 </div>
                                             </div>
                                         </div>
@@ -84,41 +74,36 @@
                                 })()}
                                 {/* Cada Banco */}
                                 {capitalSources.filter(s => s.type === 'bank').map(bank => {
-                                    const bp = bankPayments.filter(p => p.sourceId === bank.id);
-                                    const totalPaid = bp.reduce((a, p) => a + p.amount, 0);
-                                    const remaining = Math.max(0, bank.totalToPay - totalPaid);
-                                    const bd = globalStats.bankDetails?.find(b => b.name === bank.name);
+                                    const contract = FinanceEngine.summarizeBankContract({ bank, bankPayments });
+                                    const bankSourceSummary = getSourceSummary(bank.id);
+                                    const bd = globalStats.bankDetails?.find(b => b.sourceId === bank.id);
                                     const juros = bd ? bd.interestFromClients : 0;
-                                    const paidInst = Math.floor(totalPaid / bank.installmentValue);
-                                    const remainderCredit = totalPaid - (paidInst * bank.installmentValue);
-                                    const shortfall = bank.installmentValue - remainderCredit;
-                                    const remainingInst = Math.max(0, bank.totalInstallments - paidInst);
-                                    const payoffMonths = remainingInst > 0 && bank.installmentValue > 0 ? Math.ceil(remaining / bank.installmentValue) : 0;
-                                    const payoffDate = payoffMonths > 0 ? new Date(new Date().setMonth(new Date().getMonth() + payoffMonths)).toLocaleString('pt-BR', { month: 'short', year: 'numeric' }) : '—';
                                     return (
                                         <div key={bank.id} data-testid="dash-card-banco" className="bg-purple-600 text-white rounded-2xl p-5 shadow-lg">
                                             <p className="text-purple-100 text-sm font-medium">🏦 {bank.name}</p>
                                             <div className="grid grid-cols-2 gap-3 mt-3 text-center">
                                                 <div className="bg-purple-500/50 rounded-lg p-2">
-                                                    <p className="text-purple-200 text-[10px]">Dívida Restante</p>
-                                                    <p className="font-bold">{formatMoney(remaining)}</p>
+                                                    <p className="text-purple-200 text-[10px]">Saldo p/ liquidação</p>
+                                                    <p className="font-bold">{contract.officialBalance === null ? 'A confirmar' : formatMoney(contract.officialBalance)}</p>
+                                                    {contract.officialBalanceDate && <p className="text-[8px] text-purple-200">Em {formatDate(contract.officialBalanceDate)}</p>}
                                                 </div>
                                                 <div className="bg-purple-500/50 rounded-lg p-2">
                                                     <p className="text-purple-200 text-[10px]">Juros Gerados</p>
                                                     <p className="font-bold">{formatMoney(juros)}</p>
                                                 </div>
                                                 <div className="bg-purple-500/50 rounded-lg p-2">
-                                                    <p className="text-purple-200 text-[10px]">Fundo Amort.</p>
-                                                    <p className="font-bold">{formatMoney(bank.amortizationFund || 0)}</p>
+                                                    <p className="text-purple-200 text-[10px]">Fundo disponível</p>
+                                                    <p className="font-bold">{formatMoney(bankSourceSummary.interestReserve)}</p>
                                                 </div>
                                                 <div className="bg-purple-500/50 rounded-lg p-2">
-                                                    <p className="text-purple-200 text-[10px]">Parcelas</p>
-                                                    <p className="font-bold">{paidInst}/{bank.totalInstallments}{remainderCredit > 0 ? <span className="text-[9px] font-normal ml-1">(+R$ {formatMoney(remainderCredit).replace(/[^\d,.-]/g, '')})</span> : null}</p>
+                                                    <p className="text-purple-200 text-[10px]">Parcelas restantes</p>
+                                                    <p className="font-bold">{contract.accountingRemainingCount}</p>
+                                                    <p className="text-[8px] text-purple-200">{contract.anticipatedCount} antecipadas</p>
                                                 </div>
                                             </div>
                                             <div className="flex justify-between text-[10px] text-purple-200 mt-2">
-                                                <span>Próx: {formatMoney(bank.installmentValue)}</span>
-                                                <span>Previsão: {payoffDate}</span>
+                                                <span>Próx: nº {contract.nextInstallmentNumber || '—'} · {formatMoney(bank.installmentValue)}</span>
+                                                <span>Previsão: {contract.forecastDate ? formatDate(contract.forecastDate).slice(3) : 'A confirmar'}</span>
                                             </div>
                                         </div>
                                     );
@@ -173,6 +158,11 @@
                                     <div className="space-y-2">
                                         {fundsTransactions.map(t => {
                                                     const source = capitalSources.find(s => s.id === t.sourceId);
+                                                    const isLinkedToBankPayment = Boolean(t.bankPaymentId) || bankPayments.some(payment => (
+                                                        FinanceEngine.getFundingBreakdown(payment).some(part => (
+                                                            (part.fundsTransactionId || part.transactionId) === t.id
+                                                        ))
+                                                    ));
                                                     return (
                                             <div key={t.id} className="bg-gray-50 p-2 rounded-lg flex justify-between items-center border border-gray-100">
                                                 <div className="flex items-center gap-2">
@@ -184,7 +174,14 @@
                                                         <p className="text-[10px] text-gray-400">{formatDate(t.date)}{source ? ` · ${source.name}` : ''}</p>
                                                     </div>
                                                 </div>
-                                                <button onClick={() => { setFundsTransactions(fundsTransactions.filter(f => f.id !== t.id)); showToast('🗑️ Registro apagado.'); }} className="p-2 text-gray-400 hover:text-red-600"><IconDelete /></button>
+                                                <button onClick={() => {
+                                                    if (isLinkedToBankPayment) {
+                                                        showToast('❌ Este lançamento faz parte de uma operação bancária e não pode ser apagado isoladamente.');
+                                                        return;
+                                                    }
+                                                    setFundsTransactions(fundsTransactions.filter(f => f.id !== t.id));
+                                                    showToast('🗑️ Registro apagado.');
+                                                }} className={`p-2 ${isLinkedToBankPayment ? 'text-gray-300' : 'text-gray-400 hover:text-red-600'}`}><IconDelete /></button>
                                             </div>
                                                     );
                                         })}
@@ -194,107 +191,14 @@
                         </div>
 
                         {/* Resumo Bancário */}
-                        {capitalSources.some(s => s.type === "bank") && (() => {
-
-                            const handleBankPayment = (bankId, e) => {
-                                e.preventDefault();
-                                const amt = Number(bankPayAmountState);
-                                if (!amt || amt <= 0) return;
-                                setBankPayments([{ id: generateId(), date: bankPayDateState, amount: amt, sourceId: bankId, type: bankPayTypeState }, ...bankPayments]);
-                                if (bankPayTypeState === "installment") {
-                                    setCapitalSources(capitalSources.map(s => s.id === bankId ? { ...s, paidInstallments: (s.paidInstallments || 0) + 1, totalPaidToBank: (s.totalPaidToBank || 0) + amt } : s));
-                                } else {
-                                    setCapitalSources(capitalSources.map(s => s.id === bankId ? { ...s, totalPaidToBank: (s.totalPaidToBank || 0) + amt } : s));
-                                }
-                                setBankPayAmountState(""); setActiveBankPayId(null);
-                                showToast("✅ Pagamento ao banco registrado!");
-                            };
-
-                            const handleAmortize = (bankId, e) => {
-                                e.preventDefault();
-                                const amt = Number(amortizeAmountState);
-                                const bank = capitalSources.find(s => s.id === bankId);
-                                if (!amt || amt <= 0 || !bank) return;
-                                if (amt > (bank.amortizationFund || 0)) { showToast("❌ Saldo insuficiente no fundo de amortização."); return; }
-                                setBankPayments([{ id: generateId(), date: new Date().toISOString().split("T")[0], amount: amt, sourceId: bankId, type: "amortization" }, ...bankPayments]);
-                                setCapitalSources(capitalSources.map(s => s.id === bankId ? { ...s, totalPaidToBank: (s.totalPaidToBank || 0) + amt, amortizationFund: (s.amortizationFund || 0) - amt } : s));
-                                setAmortizeAmountState(""); setActiveAmortizeId(null);
-                                showToast("🏦 Amortização registrada!");
-                            };
-
-                            return (
+                        {capitalSources.some(source => source.type === 'bank') && (
                             <div className="space-y-4">
                                 <h3 className="font-bold text-gray-800 text-lg">🏦 Resumo Bancário</h3>
-                                {capitalSources.filter(s => s.type === "bank").map(bank => {
-                                    const bp = bankPayments.filter(p => p.sourceId === bank.id);
-                                    const totalPaid = bp.reduce((a, p) => a + p.amount, 0);
-                                    const paidInst = Math.floor(totalPaid / bank.installmentValue);
-                                    const remainderCredit = totalPaid - (paidInst * bank.installmentValue);
-                                    const remainingValue = Math.max(0, bank.totalToPay - totalPaid);
-                                    const remainingInst = Math.max(0, bank.totalInstallments - paidInst);
-                                    const payoffMonths = remainingInst > 0 && bank.installmentValue > 0 ? Math.ceil(remainingValue / bank.installmentValue) : 0;
-                                    const payoffDate = payoffMonths > 0 ? new Date(new Date().setMonth(new Date().getMonth() + payoffMonths)).toLocaleString("pt-BR", { month: "short", year: "numeric" }) : "—";
-                                    return (
-                                        <div key={bank.id} className="bg-white rounded-2xl p-5 shadow-sm border border-purple-200">
-                                            <div className="flex justify-between items-center mb-3">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-lg">🏦</span>
-                                                    <div><p className="font-bold text-gray-800">{bank.name}</p><p className="text-[10px] text-gray-500">Recebido: {formatMoney(bank.receivedAmount)} · Taxa: {bank.monthlyRate}% a.m.</p></div>
-                                                </div>
-                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${remainingValue <= 0 ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>{remainingValue <= 0 ? "Quitado" : "Ativo"}</span>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-2 mb-3 text-center">
-                                                <div className="bg-gray-50 rounded-lg p-2"><p className="text-[10px] text-gray-400">Pago ao Banco</p><p className="font-bold text-sm">{formatMoney(totalPaid)}</p></div>
-                                                <div className="bg-gray-50 rounded-lg p-2"><p className="text-[10px] text-gray-400">Restante</p><p className="font-bold text-sm text-red-600">{formatMoney(remainingValue)}</p></div>
-                                            </div>
-                                            <div className="mb-2">
-                                                <div className="flex justify-between text-[10px] text-gray-500"><span>Parcelas: {paidInst}/{bank.totalInstallments}{remainderCredit > 0 ? ' (+R$ ' + formatMoney(remainderCredit).replace(/[^\d,.-]/g, '') + ' crédito)' : ''}</span><span>Total: {formatMoney(bank.totalToPay)}</span></div>
-                                                <div className="w-full bg-gray-200 rounded-full h-2 mt-1"><div className="bg-purple-500 h-2 rounded-full transition-all" style={{ width: `${Math.min(100, (totalPaid / bank.totalToPay) * 100)}%` }}></div></div>
-                                            </div>
-                                            <div className="grid grid-cols-4 gap-2 text-center text-[10px] mb-3">
-                                                {(() => { const bd = globalStats.bankDetails.find(b => b.name === bank.name); return <>
-                                                <div className="bg-green-50 rounded-lg p-1.5"><p className="text-green-500">Juros Gerados</p><p className="font-bold text-green-700">{formatMoney(bd ? bd.interestFromClients : 0)}</p></div>
-                                                </>; })()}
-                                                <div className="bg-blue-50 rounded-lg p-1.5"><p className="text-blue-500">Fundo Amort.</p><p className="font-bold text-blue-700">{formatMoney(bank.amortizationFund || 0)}</p></div>
-                                                <div className="bg-gray-50 rounded-lg p-1.5"><p className="text-gray-400">Próx. Parcela</p><p className="font-bold">{formatMoney(bank.installmentValue)}</p></div>
-                                                <div className="bg-gray-50 rounded-lg p-1.5"><p className="text-gray-400">Previsão Quitação</p><p className="font-bold">{payoffDate}</p></div>
-                                            </div>
-                                            <div className="flex gap-2">
-                                                <button data-testid="banco-btn-pagar" onClick={() => setActiveBankPayId(activeBankPayId === bank.id ? null : bank.id)} className="flex-1 bg-purple-50 text-purple-700 py-2 rounded-lg text-xs font-bold border border-purple-200">+ Pagar Banco</button>
-                                                <button data-testid="banco-btn-amortizar" onClick={() => setActiveAmortizeId(activeAmortizeId === bank.id ? null : bank.id)} className="flex-1 bg-blue-50 text-blue-700 py-2 rounded-lg text-xs font-bold border border-blue-200" disabled={!bank.amortizationFund || bank.amortizationFund <= 0}>Amortizar</button>
-                                            </div>
-                                            {activeBankPayId === bank.id && (
-                                                <form onSubmit={(e) => handleBankPayment(bank.id, e)} className="mt-3 p-3 bg-purple-50 rounded-xl border border-purple-200 animate-fade-in">
-                                                    <div className="flex gap-2 mb-2">
-                                                        <button type="button" onClick={() => setBankPayTypeState("installment")} className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold ${bankPayTypeState === "installment" ? "bg-purple-600 text-white" : "bg-white text-gray-600"}`}>Parcela</button>
-                                                        <button type="button" onClick={() => setBankPayTypeState("amortization")} className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold ${bankPayTypeState === "amortization" ? "bg-blue-600 text-white" : "bg-white text-gray-600"}`}>Amortização</button>
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <input data-testid="banco-pay-date" type="date" value={bankPayDateState} onChange={e => setBankPayDateState(e.target.value)} className="w-1/3 p-2 border rounded-lg bg-white text-xs" />
-                                                        <input data-testid="banco-pay-amount" type="number" step="0.01" value={bankPayAmountState} onChange={e => setBankPayAmountState(e.target.value)} placeholder="Valor (R$)" className="flex-1 p-2 border rounded-lg bg-white text-xs" />
-                                                    </div>
-                                                    <div className="flex gap-2 mt-2">
-                                                        <button type="button" onClick={() => setActiveBankPayId(null)} className="flex-1 py-1.5 bg-white rounded-lg text-[10px] font-bold">Cancelar</button>
-                                                        <button data-testid="banco-pay-btn-registrar" type="submit" className="flex-1 py-1.5 bg-purple-600 text-white rounded-lg text-[10px] font-bold">Registrar</button>
-                                                    </div>
-                                                </form>
-                                            )}
-                                            {activeAmortizeId === bank.id && (
-                                                <form onSubmit={(e) => handleAmortize(bank.id, e)} className="mt-3 p-3 bg-blue-50 rounded-xl border border-blue-200 animate-fade-in">
-                                                    <p className="text-[10px] text-blue-700 font-bold mb-2">Amortizar do fundo: {formatMoney(bank.amortizationFund || 0)}</p>
-                                                    <div className="flex gap-2"><input type="number" step="0.01" value={amortizeAmountState} onChange={e => setAmortizeAmountState(e.target.value)} placeholder="Valor a amortizar" className="flex-1 p-2 border rounded-lg bg-white text-xs" /></div>
-                                                    <div className="flex gap-2 mt-2">
-                                                        <button type="button" onClick={() => setActiveAmortizeId(null)} className="flex-1 py-1.5 bg-white rounded-lg text-[10px] font-bold">Cancelar</button>
-                                                        <button type="submit" className="flex-1 py-1.5 bg-blue-600 text-white rounded-lg text-[10px] font-bold">Amortizar</button>
-                                                    </div>
-                                                </form>
-                                            )}
-                                        </div>
-                                    );
-                                })}
+                                {capitalSources.filter(source => source.type === 'bank').map(bank => (
+                                    <BankSummary key={bank.id} bank={bank} state={state} actions={actions} utils={utils} />
+                                ))}
                             </div>
-                            );
-                        })()}
+                        )}
 
                         {/* Segurança e Backup */}
                         <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
@@ -311,6 +215,21 @@
                                 <input type="file" accept=".txt,.json" ref={fileInputRef} style={{ display: 'none' }} onChange={onImport} />
                             </div>
                         </div>
+
+                        {integrityIssues.length > 0 && (
+                            <div data-testid="integrity-alert" className="bg-amber-50 rounded-2xl p-5 shadow-sm border border-amber-200">
+                                <h3 className="text-base font-bold text-amber-900 mb-1">⚠️ Integridade do backup</h3>
+                                <p className="text-xs text-amber-800 mb-3">
+                                    Foram encontrados {integrityIssues.length} alerta{integrityIssues.length === 1 ? '' : 's'} no histórico antigo. Nenhum registro foi apagado automaticamente.
+                                </p>
+                                <div className="space-y-1 text-xs text-amber-900">
+                                    {orphanIssues.length > 0 && <p>• {orphanIssues.length} lançamento{orphanIssues.length === 1 ? '' : 's'} sem origem existente</p>}
+                                    {duplicateIssues.length > 0 && <p>• {duplicateIssues.length} {duplicateIssues.length === 1 ? 'possível duplicação bancária' : 'possíveis duplicações bancárias'}</p>}
+                                    {mismatchIssues.length > 0 && <p>• {mismatchIssues.length} {mismatchIssues.length === 1 ? 'operação' : 'operações'} com origem do valor divergente</p>}
+                                </div>
+                                <p className="text-[10px] text-amber-700 mt-3">Revise esses itens antes de autorizar qualquer exclusão definitiva.</p>
+                            </div>
+                        )}
 
                     </div>
                 );
