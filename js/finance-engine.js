@@ -866,12 +866,22 @@
             }))
         }));
 
+        const historicalInterestAllocations = (Array.isArray(raw.historicalInterestAllocations)
+            ? raw.historicalInterestAllocations
+            : []).map(record => ({
+            ...record,
+            amount: fromCents(toCents(record.amount)),
+            sourceId: record.sourceId || null,
+            purpose: record.purpose || 'bank-interest-used'
+        }));
+
         return {
             schemaVersion: SCHEMA_VERSION,
             fundsTransactions,
             clients,
             capitalSources: sourceInput,
-            bankPayments
+            bankPayments,
+            historicalInterestAllocations
         };
     };
 
