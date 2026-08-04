@@ -16,6 +16,38 @@
 | Build | Nenhum — arquivos estáticos servidos via HTTP |
 | Testes | Playwright (MCP), navegador Chromium |
 
+## 2.1 Correção Financeira V2 (em andamento)
+
+Branch de trabalho: `fix/motor-financeiro-v2`.
+
+### Parte 1 - Fundação concluída
+
+- [x] Motor financeiro isolado em `js/finance-engine.js`
+- [x] Valores monetários calculados em centavos inteiros
+- [x] Migração para `schemaVersion: 2`
+- [x] Contratos e movimentações antigos sem origem vinculados ao Capital Próprio
+- [x] Cópia automática do `localStorage` antes da primeira migração
+- [x] Bloqueio da gravação antes do término da hidratação dos dados
+- [x] Saldo e total emprestado calculados pela mesma função no Painel e em Origens
+- [x] Remoção do efeito que reabastecia o fundo de amortização com juros já utilizados
+- [x] Detecção não destrutiva de pagamentos órfãos e possíveis duplicações
+- [x] Testes anônimos dos cenários de Capital Próprio e fundo Santander
+
+Comando dos testes do motor:
+
+```bash
+node --test tests/finance-engine.test.js
+```
+
+### Próximas partes
+
+- [ ] Modelo das parcelas consignadas, antecipações e saldos oficiais do banco
+- [ ] Operação mensal com cotação variável e múltiplas origens
+- [ ] Reconciliação assistida do histórico bancário
+- [ ] Novos cartões e histórico do Santander
+- [ ] Proteções de edição, exclusão e restauração
+- [ ] Validação final e publicação
+
 ## 3. Fases Implementadas
 
 ### Fase 1 — Fundação: Cadastro de Origens

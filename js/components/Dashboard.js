@@ -1,9 +1,9 @@
 
             // --- COMPONENTE PAINEL ---
             const Dashboard = ({ onExport, onImport, state, actions, utils }) => {
-                const { globalStats, capitalSources, clients, fundsTransactions, bankPayments } = state;
+                const { globalStats, capitalSources, fundsTransactions, bankPayments } = state;
                 const { setFundsTransactions, setCapitalSources, setBankPayments } = actions;
-                const { showToast, getCapitalBalance } = utils;
+                const { showToast, getCapitalBalance, getSourceSummary } = utils;
                 const [addAmount, setAddAmount] = useState('');
                 const [selectedSourceId, setSelectedSourceId] = useState(capitalSources.length > 0 ? capitalSources[0].id : '');
                 const fileInputRef = useRef(null);
@@ -50,33 +50,19 @@
                             <div className="space-y-4">
                                 {/* Capital Próprio */}
                                 {(() => {
-                                    const ownBalance = getCapitalBalance('own-default');
-                                    let ownNaRua = 0;
-                                    clients.forEach(c => {
-                                        (c.loans || []).forEach(l => {
-                                            if (l.sourceId) return; // só capital próprio (sem sourceId)
-                                            let principal = l.amount;
-                                            const sorted = [...(l.payments || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
-                                            sorted.forEach(p => {
-                                                const rate = (l.interestRate || 10) / 100;
-                                                const due = principal * rate;
-                                                principal -= (p.amount >= due ? p.amount - due : 0);
-                                                if (principal < 0) principal = 0;
-                                            });
-                                            ownNaRua += principal;
-                                        });
-                                    });
+                                    const ownSourceId = FinanceEngine.getDefaultOwnSourceId(capitalSources);
+                                    const ownSummary = getSourceSummary(ownSourceId);
                                     return (
                                         <div data-testid="dash-capital-proprio" className="bg-blue-600 text-white rounded-2xl p-5 shadow-lg">
                                             <p className="text-blue-100 text-sm font-medium">💰 Capital Próprio</p>
                                             <div className="grid grid-cols-2 gap-3 mt-3">
                                                 <div>
                                                     <p className="text-blue-200 text-[10px] uppercase">Disponível</p>
-                                                    <p className="text-xl font-bold">{formatMoney(ownBalance)}</p>
+                                                    <p className="text-xl font-bold">{formatMoney(ownSummary.available)}</p>
                                                 </div>
                                                 <div>
                                                     <p className="text-blue-200 text-[10px] uppercase">Emprestado</p>
-                                                    <p className="text-xl font-bold">{formatMoney(ownNaRua)}</p>
+                                                    <p className="text-xl font-bold">{formatMoney(ownSummary.outstandingPrincipal)}</p>
                                                 </div>
                                             </div>
                                         </div>
