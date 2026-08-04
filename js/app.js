@@ -74,7 +74,7 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `backup_financas_${new Date().toISOString().split('T')[0]}.txt`;
+                a.download = `backup_financas_${FinanceEngine.localIsoDate(new Date())}.txt`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
@@ -90,20 +90,35 @@
                 reader.onload = (event) => {
                     try {
                         const parsed = JSON.parse(event.target.result);
-                        if (parsed && Array.isArray(parsed.clients)) {
-                            if(window.confirm('⚠️ ATENÇÃO: Isso vai apagar os dados atuais e carregar o backup. Deseja continuar?')) {
-                                const currentData = localStorage.getItem('loanManagerData');
-                                if (currentData) localStorage.setItem('loanManagerDataBackupBeforeImport', currentData);
+                        const validation = FinanceEngine.validateBackup(parsed);
+                        if (!validation.valid) {
+                            showToast(`❌ Backup inválido: ${validation.errors[0]}`);
+                            return;
+                        }
 
-                                const migrated = FinanceEngine.migrateData(parsed);
-                                setFundsTransactions(migrated.fundsTransactions);
-                                setCapitalSources(migrated.capitalSources);
-                                setBankPayments(migrated.bankPayments);
-                                setClients(migrated.clients);
-                                showToast('✅ Backup restaurado com sucesso!');
-                            }
-                        } else {
-                            showToast('❌ O arquivo selecionado não é um backup válido.');
+                        const summary = validation.summary;
+                        const warningLine = validation.warnings.length > 0
+                            ? `\n\n⚠️ ${validation.warnings.join('\n⚠️ ')}`
+                            : '';
+                        const confirmed = window.confirm(
+                            `Importar este backup?\n\n` +
+                            `${summary.clients} clientes · ${summary.loans} empréstimos\n` +
+                            `${summary.capitalSources} origens · ${summary.bankPayments} registros bancários` +
+                            `${warningLine}\n\nOs dados atuais serão guardados antes da restauração.`
+                        );
+
+                        if (confirmed) {
+                            const currentData = localStorage.getItem('loanManagerData');
+                            if (currentData) localStorage.setItem('loanManagerDataBackupBeforeImport', currentData);
+
+                            const migrated = FinanceEngine.migrateData(parsed);
+                            setFundsTransactions(migrated.fundsTransactions);
+                            setCapitalSources(migrated.capitalSources);
+                            setBankPayments(migrated.bankPayments);
+                            setClients(migrated.clients);
+                            showToast(validation.warnings.length > 0
+                                ? '✅ Backup restaurado com alertas preservados para revisão.'
+                                : '✅ Backup restaurado com sucesso!');
                         }
                     } catch (error) {
                         showToast('❌ Erro ao ler o arquivo de backup.');

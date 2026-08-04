@@ -11,7 +11,15 @@ const bankSource = {
     receivedAmount: 11500,
     totalInstallments: 61,
     installmentValue: 302.47,
-    totalToPay: 18450.67
+    totalToPay: 18450.67,
+    firstDueDate: '2026-07-05',
+    officialBalanceSnapshots: [{
+        date: '2026-08-04',
+        amount: 8766.53,
+        nominalRemaining: 11493.86,
+        remainingStart: 2,
+        remainingEnd: 39
+    }]
 };
 
 const bankLoanClients = [
@@ -59,6 +67,8 @@ const reconciledBankPayments = [
         amount: 302.47,
         sourceId: bankSource.id,
         type: 'installment',
+        installmentNumber: 1,
+        status: 'confirmed',
         fundingBreakdown: [{ sourceId: bankSource.id, amount: 302.47 }]
     },
     {
@@ -67,6 +77,9 @@ const reconciledBankPayments = [
         amount: 1865.31,
         sourceId: bankSource.id,
         type: 'amortization',
+        installmentNumbers: FinanceEngine.rangeInclusive(48, 61),
+        nominalAmount: 4234.58,
+        discountAmount: 2369.27,
         fundingBreakdown: [
             { sourceId: bankSource.id, amount: 1192.53 },
             { sourceId: ownSource.id, amount: 672.78, fundsTransactionId: 'own-jul' }
@@ -78,6 +91,7 @@ const reconciledBankPayments = [
         amount: 302.47,
         sourceId: bankSource.id,
         type: 'installment',
+        installmentNumber: 2,
         status: 'withheld_pending_bank',
         fundingBreakdown: [{ sourceId: bankSource.id, amount: 302.47 }]
     },
@@ -87,6 +101,9 @@ const reconciledBankPayments = [
         amount: 1277.71,
         sourceId: bankSource.id,
         type: 'amortization',
+        installmentNumbers: FinanceEngine.rangeInclusive(40, 47),
+        nominalAmount: 2419.76,
+        discountAmount: 1142.05,
         fundingBreakdown: [
             { sourceId: bankSource.id, amount: 1192.53 },
             { sourceId: ownSource.id, amount: 85.18, fundsTransactionId: 'own-aug' }
@@ -221,10 +238,37 @@ test('consome o fundo bancário uma única vez e não duplica complementos já l
 
     assert.equal(bankSummary.clientInterestReceived, 2990);
     assert.equal(bankSummary.bankFunding, 2990);
+    assert.equal(bankSummary.interestReserve, 0);
     assert.equal(bankSummary.available, 0);
     assert.equal(ownSummary.manualFunds, -757.96);
     assert.equal(ownSummary.bankFunding, 0);
     assert.equal(ownSummary.available, -757.96);
+});
+
+test('separa juros reservados de principal bancário recuperado e reutilizável', () => {
+    const source = { ...bankSource, id: 'bank-recovered', receivedAmount: 1000 };
+    const summary = FinanceEngine.getSourceSummary({
+        sourceId: source.id,
+        capitalSources: [source, ownSource],
+        fundsTransactions: [],
+        clients: [{
+            id: 'client-recovered',
+            name: 'Cliente de teste',
+            loans: [{
+                id: 'loan-recovered',
+                date: '2026-01-01',
+                amount: 1000,
+                interestRate: 10,
+                sourceId: source.id,
+                payments: [{ id: 'payment-recovered', date: '2026-02-01', amount: 200 }]
+            }]
+        }],
+        bankPayments: []
+    });
+
+    assert.equal(summary.cashBalance, 200);
+    assert.equal(summary.interestReserve, 100);
+    assert.equal(summary.available, 100);
 });
 
 test('gera os indicadores bancários reconciliados sem tratar principal recuperado como lucro', () => {
@@ -240,8 +284,69 @@ test('gera os indicadores bancários reconciliados sem tratar principal recupera
     assert.equal(bank.interestFromClients, 2990);
     assert.equal(bank.totalPaidToBank, 3747.96);
     assert.equal(bank.reserveBalance, 0);
+    assert.equal(bank.remainingDebt, 8766.53);
     assert.equal(stats.committedCapital, 0);
     assert.equal(stats.realProfit, 0);
+});
+
+test('resume parcelas confirmadas, pendentes e antecipadas sem dividir valores pela parcela nominal', () => {
+    const summary = FinanceEngine.summarizeBankContract({
+        bank: bankSource,
+        bankPayments: reconciledBankPayments
+    });
+
+    assert.deepEqual(summary.confirmedNormalNumbers, [1]);
+    assert.deepEqual(summary.pendingNormalNumbers, [2]);
+    assert.equal(summary.anticipatedCount, 22);
+    assert.deepEqual(summary.anticipatedNumbers, FinanceEngine.rangeInclusive(40, 61));
+    assert.equal(summary.bankRemainingCount, 38);
+    assert.deepEqual(summary.bankRemainingNumbers, FinanceEngine.rangeInclusive(2, 39));
+    assert.equal(summary.accountingRemainingCount, 37);
+    assert.deepEqual(summary.accountingRemainingNumbers, FinanceEngine.rangeInclusive(3, 39));
+    assert.equal(summary.totalCashPaid, 3747.96);
+    assert.equal(summary.confirmedCashPaid, 3445.49);
+    assert.equal(summary.amortizationCashPaid, 3143.02);
+    assert.equal(summary.anticipatedNominal, 6654.34);
+    assert.equal(summary.anticipatedDiscount, 3511.32);
+    assert.equal(summary.nextInstallmentNumber, 3);
+    assert.equal(summary.nextInstallmentDueDate, '2026-09-05');
+    assert.equal(summary.forecastDate, '2029-09-05');
+    assert.equal(summary.officialBalance, 8766.53);
+    assert.equal(summary.officialBalanceDate, '2026-08-04');
+});
+
+test('seleciona dinamicamente as últimas parcelas que ainda não foram resolvidas', () => {
+    const selected = FinanceEngine.selectFinalInstallments({
+        bank: bankSource,
+        bankPayments: reconciledBankPayments,
+        count: 8
+    });
+
+    assert.deepEqual(selected, FinanceEngine.rangeInclusive(32, 39));
+});
+
+test('distribui uma operação mensal entre fundo bancário, complemento e sobra', () => {
+    const higher = FinanceEngine.calculateMonthlyBankSettlement({
+        reserveAvailable: 1495,
+        installmentAmount: 302.47,
+        quoteAmount: 1277.71
+    });
+    const lower = FinanceEngine.calculateMonthlyBankSettlement({
+        reserveAvailable: 1495,
+        installmentAmount: 302.47,
+        quoteAmount: 1109.27
+    });
+
+    assert.equal(higher.reserveForInstallment, 302.47);
+    assert.equal(higher.reserveForAmortization, 1192.53);
+    assert.equal(higher.ownForAmortization, 85.18);
+    assert.equal(higher.ownCapitalRequired, 85.18);
+    assert.equal(higher.reserveCarryover, 0);
+    assert.equal(higher.totalBankOutflow, 1580.18);
+
+    assert.equal(lower.ownCapitalRequired, 0);
+    assert.equal(lower.reserveCarryover, 83.26);
+    assert.equal(lower.totalBankOutflow, 1411.74);
 });
 
 test('detecta pagamentos órfãos e possíveis duplicações sem apagar registros', () => {
@@ -257,4 +362,50 @@ test('detecta pagamentos órfãos e possíveis duplicações sem apagar registro
 
     assert.equal(issues.filter(issue => issue.type === 'orphan-bank-payment').length, 2);
     assert.equal(issues.filter(issue => issue.type === 'possible-duplicate-bank-payment').length, 1);
+});
+
+test('valida o backup antes da importação e resume o conteúdo preservado', () => {
+    const valid = FinanceEngine.validateBackup({
+        clients: [{ id: 'client-1', name: 'Cliente', loans: [{ id: 'loan-1', amount: 100, payments: [] }] }],
+        capitalSources: [{ id: 'own-1', type: 'own', name: 'Capital Próprio' }],
+        fundsTransactions: [{ id: 'fund-1', date: '2026-08-01', amount: 100, sourceId: 'own-1' }],
+        bankPayments: []
+    });
+
+    assert.equal(valid.valid, true);
+    assert.deepEqual(valid.summary, {
+        clients: 1,
+        loans: 1,
+        capitalSources: 1,
+        fundsTransactions: 1,
+        bankPayments: 0
+    });
+
+    const invalid = FinanceEngine.validateBackup({ clients: 'não é uma lista' });
+    assert.equal(invalid.valid, false);
+    assert.match(invalid.errors[0], /clientes/i);
+});
+
+test('aceita saldo oficial zero como contrato quitado', () => {
+    const summary = FinanceEngine.summarizeBankContract({
+        bank: {
+            ...bankSource,
+            officialBalanceSnapshots: [{
+                date: '2026-09-01',
+                amount: 0,
+                remainingInstallmentNumbers: []
+            }]
+        },
+        bankPayments: []
+    });
+
+    assert.equal(summary.officialBalance, 0);
+    assert.equal(summary.bankRemainingCount, 0);
+    assert.equal(summary.accountingRemainingCount, 0);
+    assert.equal(summary.forecastDate, null);
+});
+
+test('mantém o vencimento no último dia quando o mês é mais curto', () => {
+    assert.equal(FinanceEngine.getInstallmentDueDate('2026-01-31', 2), '2026-02-28');
+    assert.equal(FinanceEngine.getInstallmentDueDate('2024-01-31', 2), '2024-02-29');
 });

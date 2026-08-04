@@ -15,6 +15,11 @@
         type: 'own',
         name: 'Capital Próprio'
     });
+    const BANK_PAYMENT_STATUS = Object.freeze({
+        SCHEDULED: 'scheduled',
+        WITHHELD_PENDING_BANK: 'withheld_pending_bank',
+        CONFIRMED: 'confirmed'
+    });
 
     const isMissingSourceId = (sourceId) => sourceId === undefined || sourceId === null || sourceId === '';
 
@@ -185,7 +190,9 @@
                 clientPrincipalRecovered: 0,
                 clientReceipts: 0,
                 manualFunds: 0,
-                bankFunding: 0
+                bankFunding: 0,
+                interestReserve: 0,
+                cashBalance: 0
             };
         }
 
@@ -228,7 +235,13 @@
         });
 
         const baseCapitalCents = source.type === 'bank' ? toCents(source.receivedAmount) : 0;
-        const availableCents = baseCapitalCents + manualFundsCents + clientReceiptsCents - loansGrantedCents - bankFundingCents;
+        const cashBalanceCents = baseCapitalCents + manualFundsCents + clientReceiptsCents - loansGrantedCents - bankFundingCents;
+        const interestReserveCents = source.type === 'bank'
+            ? Math.max(0, clientInterestReceivedCents - bankFundingCents)
+            : 0;
+        const availableCents = source.type === 'bank'
+            ? cashBalanceCents - interestReserveCents
+            : cashBalanceCents;
 
         return {
             sourceId,
@@ -242,6 +255,8 @@
             clientReceipts: fromCents(clientReceiptsCents),
             manualFunds: fromCents(manualFundsCents),
             bankFunding: fromCents(bankFundingCents),
+            interestReserve: fromCents(interestReserveCents),
+            cashBalance: fromCents(cashBalanceCents),
             _cents: {
                 available: availableCents,
                 outstandingPrincipal: outstandingPrincipalCents,
@@ -250,7 +265,9 @@
                 clientPrincipalRecovered: clientPrincipalRecoveredCents,
                 clientReceipts: clientReceiptsCents,
                 manualFunds: manualFundsCents,
-                bankFunding: bankFundingCents
+                bankFunding: bankFundingCents,
+                interestReserve: interestReserveCents,
+                cashBalance: cashBalanceCents
             }
         };
     };
@@ -286,6 +303,240 @@
             unusedOwnCapitalBudget: fromCents(unusedOwnBudgetCents),
             withinPlannedBudget: automaticComplementCents <= voluntaryOwnCents,
             surplus: fromCents(surplusCents),
+            totalBankOutflow: fromCents(installmentCents + quoteCents)
+        };
+    };
+
+    const rangeInclusive = (start, end) => {
+        const first = Number(start);
+        const last = Number(end);
+        if (!Number.isInteger(first) || !Number.isInteger(last) || first <= 0 || last < first) return [];
+        return Array.from({ length: last - first + 1 }, (_, index) => first + index);
+    };
+
+    const uniqueInstallmentNumbers = (numbers, totalInstallments) => [...new Set((numbers || [])
+        .map(Number)
+        .filter(number => Number.isInteger(number) && number > 0 && (!totalInstallments || number <= totalInstallments)))]
+        .sort((left, right) => left - right);
+
+    const getPaymentInstallmentNumbers = (payment, totalInstallments) => {
+        if (Array.isArray(payment?.installmentNumbers)) {
+            return uniqueInstallmentNumbers(payment.installmentNumbers, totalInstallments);
+        }
+
+        if (payment?.installmentRange?.start && payment?.installmentRange?.end) {
+            return uniqueInstallmentNumbers(
+                rangeInclusive(payment.installmentRange.start, payment.installmentRange.end),
+                totalInstallments
+            );
+        }
+
+        if (payment?.installmentStart && payment?.installmentEnd) {
+            return uniqueInstallmentNumbers(
+                rangeInclusive(payment.installmentStart, payment.installmentEnd),
+                totalInstallments
+            );
+        }
+
+        if (payment?.installmentNumber) {
+            return uniqueInstallmentNumbers([payment.installmentNumber], totalInstallments);
+        }
+
+        return [];
+    };
+
+    const getOfficialRemainingNumbers = (snapshot, totalInstallments) => {
+        if (!snapshot) return [];
+        if (Array.isArray(snapshot.remainingInstallmentNumbers)) {
+            return uniqueInstallmentNumbers(snapshot.remainingInstallmentNumbers, totalInstallments);
+        }
+        if (snapshot.remainingStart && snapshot.remainingEnd) {
+            return uniqueInstallmentNumbers(
+                rangeInclusive(snapshot.remainingStart, snapshot.remainingEnd),
+                totalInstallments
+            );
+        }
+        return [];
+    };
+
+    const addMonthsToIsoDate = (date, amount) => {
+        const parts = parseIsoDate(date);
+        if (!parts) return null;
+        const targetMonth = new Date(parts.year, parts.month + Number(amount || 0), 1);
+        const year = targetMonth.getFullYear();
+        const monthIndex = targetMonth.getMonth();
+        const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+        const month = String(monthIndex + 1).padStart(2, '0');
+        const day = String(Math.min(parts.day, lastDay)).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+
+    const getInstallmentDueDate = (firstDueDate, installmentNumber) => {
+        if (!firstDueDate || !installmentNumber) return null;
+        return addMonthsToIsoDate(firstDueDate, Number(installmentNumber) - 1);
+    };
+
+    const summarizeBankContract = ({ bank, bankPayments = [] }) => {
+        if (!bank) return null;
+        const totalInstallments = Number(bank.totalInstallments || 0);
+        const allNumbers = rangeInclusive(1, totalInstallments);
+        const relatedPayments = bankPayments
+            .filter(payment => payment.sourceId === bank.id)
+            .map((payment, index) => ({ ...payment, _index: index }))
+            .sort((left, right) => compareIsoDates(left.date, right.date) || left._index - right._index);
+
+        const normalPayments = relatedPayments.filter(payment => payment.type === 'installment');
+        const amortizations = relatedPayments.filter(payment => payment.type === 'amortization');
+        const anticipatedNumbers = new Set();
+        const confirmedNormalNumbers = new Set();
+        const pendingNormalNumbers = new Set();
+        const scheduledNormalNumbers = new Set();
+        const usedNormalNumbers = new Set();
+        const unreconciledPayments = [];
+
+        amortizations.forEach(payment => {
+            const numbers = getPaymentInstallmentNumbers(payment, totalInstallments);
+            if (numbers.length === 0) {
+                unreconciledPayments.push(payment.id);
+                return;
+            }
+            numbers.forEach(number => anticipatedNumbers.add(number));
+        });
+
+        normalPayments.forEach(payment => {
+            const explicitNumbers = getPaymentInstallmentNumbers(payment, totalInstallments);
+            let installmentNumber = explicitNumbers[0];
+
+            if (!installmentNumber) {
+                installmentNumber = allNumbers.find(number => (
+                    !anticipatedNumbers.has(number) && !usedNormalNumbers.has(number)
+                ));
+                unreconciledPayments.push(payment.id);
+            }
+            if (!installmentNumber) return;
+
+            usedNormalNumbers.add(installmentNumber);
+            const status = payment.status || BANK_PAYMENT_STATUS.CONFIRMED;
+            if (status === BANK_PAYMENT_STATUS.SCHEDULED) scheduledNormalNumbers.add(installmentNumber);
+            else if (status === BANK_PAYMENT_STATUS.WITHHELD_PENDING_BANK) pendingNormalNumbers.add(installmentNumber);
+            else confirmedNormalNumbers.add(installmentNumber);
+        });
+
+        const officialSnapshots = [...(bank.officialBalanceSnapshots || [])]
+            .sort((left, right) => compareIsoDates(right.date, left.date));
+        const latestOfficial = officialSnapshots[0] || null;
+        const officialRemainingNumbers = getOfficialRemainingNumbers(latestOfficial, totalInstallments);
+        const hasOfficialInstallmentState = Boolean(latestOfficial && (
+            Array.isArray(latestOfficial.remainingInstallmentNumbers) ||
+            (latestOfficial.remainingStart && latestOfficial.remainingEnd) ||
+            toCents(latestOfficial.amount) === 0
+        ));
+        const bankRemainingSet = new Set(hasOfficialInstallmentState ? officialRemainingNumbers : allNumbers);
+
+        anticipatedNumbers.forEach(number => bankRemainingSet.delete(number));
+        confirmedNormalNumbers.forEach(number => bankRemainingSet.delete(number));
+
+        const accountingRemainingSet = new Set(bankRemainingSet);
+        pendingNormalNumbers.forEach(number => accountingRemainingSet.delete(number));
+
+        const bankRemainingNumbers = [...bankRemainingSet].sort((left, right) => left - right);
+        const accountingRemainingNumbers = [...accountingRemainingSet].sort((left, right) => left - right);
+        const installmentValueCents = toCents(bank.installmentValue);
+        const totalCashPaidCents = relatedPayments
+            .filter(payment => payment.status !== BANK_PAYMENT_STATUS.SCHEDULED)
+            .reduce((total, payment) => total + toCents(payment.amount), 0);
+        const confirmedCashPaidCents = relatedPayments
+            .filter(payment => payment.status !== BANK_PAYMENT_STATUS.SCHEDULED)
+            .filter(payment => payment.type !== 'installment' || (payment.status || BANK_PAYMENT_STATUS.CONFIRMED) === BANK_PAYMENT_STATUS.CONFIRMED)
+            .reduce((total, payment) => total + toCents(payment.amount), 0);
+        const amortizationCashCents = amortizations.reduce((total, payment) => total + toCents(payment.amount), 0);
+        const anticipatedNominalCents = amortizations.reduce((total, payment) => {
+            const numbers = getPaymentInstallmentNumbers(payment, totalInstallments);
+            const nominal = payment.nominalAmount === undefined
+                ? installmentValueCents * numbers.length
+                : toCents(payment.nominalAmount);
+            return total + nominal;
+        }, 0);
+        const anticipatedDiscountCents = amortizations.reduce((total, payment) => {
+            if (payment.discountAmount !== undefined) return total + toCents(payment.discountAmount);
+            const numbers = getPaymentInstallmentNumbers(payment, totalInstallments);
+            const nominal = payment.nominalAmount === undefined
+                ? installmentValueCents * numbers.length
+                : toCents(payment.nominalAmount);
+            return total + Math.max(0, nominal - toCents(payment.amount));
+        }, 0);
+
+        const firstDueDate = bank.firstDueDate || null;
+        const nextInstallmentNumber = accountingRemainingNumbers[0] || null;
+        const lastInstallmentNumber = accountingRemainingNumbers[accountingRemainingNumbers.length - 1] || null;
+
+        return {
+            sourceId: bank.id,
+            totalInstallments,
+            confirmedNormalNumbers: [...confirmedNormalNumbers].sort((left, right) => left - right),
+            pendingNormalNumbers: [...pendingNormalNumbers].sort((left, right) => left - right),
+            scheduledNormalNumbers: [...scheduledNormalNumbers].sort((left, right) => left - right),
+            anticipatedNumbers: [...anticipatedNumbers].sort((left, right) => left - right),
+            confirmedNormalCount: confirmedNormalNumbers.size,
+            pendingNormalCount: pendingNormalNumbers.size,
+            scheduledNormalCount: scheduledNormalNumbers.size,
+            anticipatedCount: anticipatedNumbers.size,
+            bankRemainingNumbers,
+            accountingRemainingNumbers,
+            bankRemainingCount: bankRemainingNumbers.length,
+            accountingRemainingCount: accountingRemainingNumbers.length,
+            resolvedByBankCount: totalInstallments - bankRemainingNumbers.length,
+            resolvedInPersonalControlCount: totalInstallments - accountingRemainingNumbers.length,
+            nextInstallmentNumber,
+            nextInstallmentDueDate: getInstallmentDueDate(firstDueDate, nextInstallmentNumber),
+            lastInstallmentNumber,
+            forecastDate: getInstallmentDueDate(firstDueDate, lastInstallmentNumber),
+            totalCashPaid: fromCents(totalCashPaidCents),
+            confirmedCashPaid: fromCents(confirmedCashPaidCents),
+            amortizationCashPaid: fromCents(amortizationCashCents),
+            anticipatedNominal: fromCents(anticipatedNominalCents),
+            anticipatedDiscount: fromCents(anticipatedDiscountCents),
+            officialBalance: latestOfficial ? fromCents(toCents(latestOfficial.amount)) : null,
+            officialBalanceDate: latestOfficial?.date || null,
+            officialNominalRemaining: latestOfficial?.nominalRemaining === undefined
+                ? null
+                : fromCents(toCents(latestOfficial.nominalRemaining)),
+            unreconciledPayments
+        };
+    };
+
+    const selectFinalInstallments = ({ bank, bankPayments = [], count }) => {
+        const summary = summarizeBankContract({ bank, bankPayments });
+        const quantity = Math.max(0, Number(count || 0));
+        if (!summary || !Number.isInteger(quantity) || quantity === 0) return [];
+        return summary.accountingRemainingNumbers.slice(-quantity);
+    };
+
+    const calculateMonthlyBankSettlement = ({
+        reserveAvailable = 0,
+        installmentAmount = 0,
+        quoteAmount = 0
+    }) => {
+        const reserveCents = Math.max(0, toCents(reserveAvailable));
+        const installmentCents = Math.max(0, toCents(installmentAmount));
+        const quoteCents = Math.max(0, toCents(quoteAmount));
+        const reserveForInstallmentCents = Math.min(reserveCents, installmentCents);
+        const reserveAfterInstallmentCents = reserveCents - reserveForInstallmentCents;
+        const reserveForAmortizationCents = Math.min(reserveAfterInstallmentCents, quoteCents);
+        const ownForInstallmentCents = installmentCents - reserveForInstallmentCents;
+        const ownForAmortizationCents = quoteCents - reserveForAmortizationCents;
+        const reserveCarryoverCents = reserveAfterInstallmentCents - reserveForAmortizationCents;
+
+        return {
+            reserveAvailable: fromCents(reserveCents),
+            installmentAmount: fromCents(installmentCents),
+            quoteAmount: fromCents(quoteCents),
+            reserveForInstallment: fromCents(reserveForInstallmentCents),
+            reserveForAmortization: fromCents(reserveForAmortizationCents),
+            ownForInstallment: fromCents(ownForInstallmentCents),
+            ownForAmortization: fromCents(ownForAmortizationCents),
+            ownCapitalRequired: fromCents(ownForInstallmentCents + ownForAmortizationCents),
+            reserveCarryover: fromCents(reserveCarryoverCents),
             totalBankOutflow: fromCents(installmentCents + quoteCents)
         };
     };
@@ -462,8 +713,8 @@
                 totalPaidToBank: fromCents(bank.totalPaidToBankCents),
                 remainingDebt: fromCents(remainingDebtCents),
                 officialBalanceDate: latestOfficial?.date || null,
-                reserveBalance: sourceSummary?.available || 0,
-                amortizationFund: sourceSummary?.available || 0
+                reserveBalance: sourceSummary?.interestReserve || 0,
+                amortizationFund: sourceSummary?.interestReserve || 0
             };
         });
 
@@ -521,6 +772,11 @@
                         ? calculatedTotal
                         : fromCents(toCents(source.totalToPay)),
                     additionalFees: fromCents(toCents(source.additionalFees)),
+                    iofAmount: source.iofAmount === undefined ? undefined : fromCents(toCents(source.iofAmount)),
+                    contractRateMonthly: source.contractRateMonthly === undefined
+                        ? undefined
+                        : Number(source.contractRateMonthly),
+                    cetMonthly: source.cetMonthly === undefined ? undefined : Number(source.cetMonthly),
                     totalPaidToBank: fromCents(toCents(source.totalPaidToBank)),
                     monthlyReserve: fromCents(toCents(source.monthlyReserve)),
                     amortizationFund: fromCents(toCents(source.amortizationFund)),
@@ -590,6 +846,20 @@
         const bankPayments = (Array.isArray(raw.bankPayments) ? raw.bankPayments : []).map(payment => ({
             ...payment,
             amount: fromCents(toCents(payment.amount)),
+            status: payment.status || BANK_PAYMENT_STATUS.CONFIRMED,
+            competence: payment.competence || String(payment.date || '').slice(0, 7) || null,
+            installmentNumber: payment.installmentNumber === undefined
+                ? undefined
+                : Number(payment.installmentNumber),
+            installmentNumbers: getPaymentInstallmentNumbers(payment).length > 0
+                ? getPaymentInstallmentNumbers(payment)
+                : undefined,
+            nominalAmount: payment.nominalAmount === undefined
+                ? undefined
+                : fromCents(toCents(payment.nominalAmount)),
+            discountAmount: payment.discountAmount === undefined
+                ? undefined
+                : fromCents(toCents(payment.discountAmount)),
             fundingBreakdown: getFundingBreakdown(payment).map(part => ({
                 ...part,
                 amount: fromCents(toCents(part.amount))
@@ -655,9 +925,98 @@
         return issues;
     };
 
+    const validateBackup = (raw) => {
+        const errors = [];
+        const warnings = [];
+        const expectedArrays = ['clients', 'fundsTransactions', 'capitalSources', 'bankPayments'];
+
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return {
+                valid: false,
+                errors: ['O conteúdo do arquivo não é um objeto de backup.'],
+                warnings,
+                integrityIssues: [],
+                summary: null
+            };
+        }
+
+        if (!Array.isArray(raw.clients)) {
+            errors.push('A lista de clientes está ausente ou inválida.');
+        }
+
+        expectedArrays.slice(1).forEach(field => {
+            if (raw[field] !== undefined && !Array.isArray(raw[field])) {
+                errors.push(`O campo ${field} deveria ser uma lista.`);
+            }
+        });
+
+        if (Number(raw.schemaVersion || 1) > SCHEMA_VERSION) {
+            errors.push('Este backup foi criado por uma versão mais nova do aplicativo.');
+        }
+
+        if (errors.length > 0) {
+            return { valid: false, errors, warnings, integrityIssues: [], summary: null };
+        }
+
+        const normalized = migrateData(raw);
+        const duplicateIdCollections = [];
+        const collections = {
+            clientes: normalized.clients,
+            origens: normalized.capitalSources,
+            movimentações: normalized.fundsTransactions,
+            pagamentosBancários: normalized.bankPayments
+        };
+
+        Object.entries(collections).forEach(([label, items]) => {
+            const seen = new Set();
+            let hasDuplicate = false;
+            items.forEach(item => {
+                if (!item?.id) return;
+                if (seen.has(item.id)) hasDuplicate = true;
+                seen.add(item.id);
+            });
+            if (hasDuplicate) duplicateIdCollections.push(label);
+        });
+
+        normalized.clients.forEach(client => {
+            const seenLoanIds = new Set();
+            (client.loans || []).forEach(loan => {
+                if (loan?.id && seenLoanIds.has(loan.id)) {
+                    warnings.push(`O cliente ${client.name || 'sem nome'} possui identificadores de empréstimo repetidos.`);
+                }
+                if (loan?.id) seenLoanIds.add(loan.id);
+            });
+        });
+
+        if (duplicateIdCollections.length > 0) {
+            warnings.push(`Existem identificadores repetidos em: ${duplicateIdCollections.join(', ')}.`);
+        }
+
+        const integrityIssues = findIntegrityIssues(normalized);
+        if (integrityIssues.length > 0) {
+            warnings.push(`Foram encontrados ${integrityIssues.length} alertas de integridade que serão preservados para revisão.`);
+        }
+
+        const loanCount = normalized.clients.reduce((total, client) => total + (client.loans || []).length, 0);
+        return {
+            valid: true,
+            errors,
+            warnings,
+            integrityIssues,
+            summary: {
+                clients: normalized.clients.length,
+                loans: loanCount,
+                capitalSources: normalized.capitalSources.length,
+                fundsTransactions: normalized.fundsTransactions.length,
+                bankPayments: normalized.bankPayments.length
+            }
+        };
+    };
+
     return Object.freeze({
         SCHEMA_VERSION,
         DEFAULT_OWN_SOURCE,
+        BANK_PAYMENT_STATUS,
         toCents,
         fromCents,
         sumCents,
@@ -670,9 +1029,17 @@
         getSourceSummary,
         getCapitalBalance,
         calculateAmortizationChoice,
+        rangeInclusive,
+        getPaymentInstallmentNumbers,
+        getOfficialRemainingNumbers,
+        getInstallmentDueDate,
+        summarizeBankContract,
+        selectFinalInstallments,
+        calculateMonthlyBankSettlement,
         calculateGlobalStats,
         migrateData,
         findIntegrityIssues,
+        validateBackup,
         localIsoDate
     });
 });

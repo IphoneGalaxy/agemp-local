@@ -1,248 +1,146 @@
-# Finanças Pro — Plano do Projeto
+# Finanças Pro — Motor Financeiro V2
 
-## 1. Visão do Produto
+## Objetivo
 
-**Finanças Pro** é um aplicativo de controle financeiro para gestão de empréstimos pessoais. Permite gerenciar **capital próprio** e **capital de empréstimos bancários**, cadastrar clientes, registrar empréstimos com juros personalizados, controlar pagamentos com amortização automática, acompanhar pendências mensais, gerenciar passivos bancários (parcelas, amortização, projeção de quitação), calcular **lucro real vs capital comprometido** e usar uma **calculadora de taxa sugerida** para empréstimos financiados por bancos. Totalmente offline (localStorage), sem backend, funciona em qualquer navegador (desktop e mobile).
-
-## 2. Stack
-
-| Camada | Tecnologia |
-|---|---|
-| HTML | HTML5, semântico |
-| Estilo | Tailwind CSS (CDN) + CSS customizado (`assets/css/style.css`) |
-| UI | React 18 (CDN UMD) |
-| Transpilação | Babel standalone (CDN, `type="text/babel"`) |
-| Persistência | `localStorage` (chave `loanManagerData`) |
-| Build | Nenhum — arquivos estáticos servidos via HTTP |
-| Testes | Playwright (MCP), navegador Chromium |
-
-## 2.1 Correção Financeira V2 (em andamento)
+Aplicativo local para controlar capital próprio, capital bancário, empréstimos a clientes, recebimentos mensais e a quitação antecipada de contratos bancários. Os dados ficam no `localStorage` e podem ser exportados ou restaurados por arquivo.
 
 Branch de trabalho: `fix/motor-financeiro-v2`.
 
-### Parte 1 - Fundação concluída
+## Ordem de execução
+
+O trabalho começou pelo núcleo mais difícil, pois todas as telas e migrações dependem dele.
+
+### 1. Motor e migração
 
 - [x] Motor financeiro isolado em `js/finance-engine.js`
-- [x] Valores monetários calculados em centavos inteiros
-- [x] Migração para `schemaVersion: 2`
-- [x] Contratos e movimentações antigos sem origem vinculados ao Capital Próprio
+- [x] Dinheiro calculado em centavos inteiros
+- [x] Migração idempotente para `schemaVersion: 2`
+- [x] Registros antigos sem origem vinculados ao Capital Próprio padrão
+- [x] Registros que apontam para uma origem antiga inexistente preservados como alertas
 - [x] Cópia automática do `localStorage` antes da primeira migração
-- [x] Bloqueio da gravação antes do término da hidratação dos dados
-- [x] Saldo e total emprestado calculados pela mesma função no Painel e em Origens
-- [x] Remoção do efeito que reabastecia o fundo de amortização com juros já utilizados
-- [x] Detecção não destrutiva de pagamentos órfãos e possíveis duplicações
-- [x] Testes anônimos dos cenários de Capital Próprio e fundo Santander
+- [x] Bloqueio da gravação antes da hidratação inicial
 
-Comando dos testes do motor:
+### 2. Saldos e lucro
+
+- [x] Painel e aba Origens usam o mesmo resumo por origem
+- [x] Principal devolvido pelo cliente volta a ser capital disponível
+- [x] Juros recebidos de clientes bancários ficam em uma reserva separada
+- [x] Valor já utilizado no banco não reaparece no fundo
+- [x] Amortização de principal não é tratada como lucro
+- [x] Capital Próprio e capital bancário não são misturados
+
+### 3. Contrato bancário
+
+- [x] Valor recebido e valor financiado separados
+- [x] Taxa contratual, CET, IOF, primeira data de vencimento e total nominal
+- [x] Parcela normal confirmada, descontada em folha ou apenas programada
+- [x] Confirmação posterior do repasse sem criar outro pagamento
+- [x] Antecipação pelas parcelas finais exatas, sem dividir o valor pela parcela nominal
+- [x] Valor pago, nominal eliminado e desconto de juros separados
+- [x] Saldo oficial para liquidação com data do demonstrativo
+- [x] Contagem do banco separada da contagem pessoal quando existe parcela em folha
+- [x] Previsão de quitação baseada na última parcela realmente restante
+- [x] Saldo oficial igual a zero reconhecido como contrato quitado
+
+### 4. Fechamento mensal
+
+- [x] Cadastro de duas ou mais cotações fornecidas pelo banco
+- [x] Seleção da quantidade e do valor exato da opção escolhida
+- [x] Seleção automática das últimas parcelas ainda abertas
+- [x] Reserva usada primeiro na parcela mensal e depois na antecipação
+- [x] Sobra menor mantida para o mês seguinte
+- [x] Diferença maior retirada de uma origem de Capital Próprio escolhida
+- [x] Bloqueio quando não existe saldo suficiente para o complemento
+- [x] Pagamento e complemento vinculados na mesma operação
+- [x] Desfazer atômico: remove o pagamento e estorna o complemento juntos
+- [x] Bloqueio de parcela repetida na mesma competência
+- [x] Bloqueio de nova antecipação enquanto o contrato atual tiver parcelas antigas não reconciliadas
+
+### 5. Integridade e backup
+
+- [x] Validação do arquivo antes de importar
+- [x] Resumo de clientes, empréstimos, origens e registros bancários antes da confirmação
+- [x] Backup automático dos dados atuais antes da restauração
+- [x] Detecção não destrutiva de órfãos, possíveis duplicidades e divergências de origem
+- [x] Alerta visível no Painel, sem exclusão automática
+- [x] Origem com qualquer histórico vinculado não pode ser removida
+- [x] Capital Próprio principal não pode ser removido
+- [x] Lançamento de caixa vinculado ao banco não pode ser apagado isoladamente
+- [ ] Excluir registros antigos órfãos somente após confirmação expressa do usuário
+
+### 6. Validação e publicação
+
+- [x] Testes unitários do motor
+- [x] Compilação de todos os componentes JSX
+- [x] Teste de interface do fechamento mensal, confirmação, estorno e proteção de origem
+- [x] Validação do backup original e do backup corrigido
+- [x] Revisão final do diff
+- [ ] Publicação em branch remota e abertura de PR
+- [ ] Homologação antes de alterar a versão publicada no GitHub Pages
+
+## Regras financeiras
+
+### Caixa por origem
+
+Para cada origem:
+
+1. soma o capital inicial e as movimentações manuais;
+2. subtrai os valores emprestados;
+3. soma os recebimentos dos clientes;
+4. subtrai apenas os pagamentos bancários realmente financiados por essa origem;
+5. em origem bancária, separa o principal recuperado da reserva de juros.
+
+### Fechamento mensal bancário
+
+```text
+reserva do mês = juros bancários recebidos e ainda não utilizados
+reserva após parcela = reserva do mês - parcela normal
+complemento próprio = máx(0, cotação escolhida - reserva após parcela)
+sobra = máx(0, reserva após parcela - cotação escolhida)
+```
+
+Exemplo de aceitação:
+
+| Item | Valor |
+|---|---:|
+| Juros recebidos no mês | R$ 1.495,00 |
+| Parcela normal | R$ 302,47 |
+| Reserva prevista para antecipação | R$ 1.192,53 |
+| Opção de 7 parcelas | R$ 1.109,27 |
+| Sobra com a opção de 7 | R$ 83,26 |
+| Opção de 8 parcelas | R$ 1.277,71 |
+| Complemento próprio com a opção de 8 | R$ 85,18 |
+
+A quantidade de parcelas nunca é estimada por `valor ÷ parcela nominal`. O banco fornece a quantidade e o valor descontado; o aplicativo registra exatamente essa cotação e associa os números das últimas parcelas ainda abertas.
+
+## Estrutura
+
+```text
+index.html
+assets/css/style.css
+js/
+  finance-engine.js
+  utils.js
+  icons.js
+  app.js
+  main.js
+  components/
+    BankSummary.js
+    Dashboard.js
+    SourcesList.js
+    ClientsList.js
+    ClientView.js
+tests/
+  finance-engine.test.js
+docs/
+  plan.md
+```
+
+## Verificação local
 
 ```bash
 node --test tests/finance-engine.test.js
-```
-
-### Próximas partes
-
-- [ ] Modelo das parcelas consignadas, antecipações e saldos oficiais do banco
-- [ ] Operação mensal com cotação variável e múltiplas origens
-- [ ] Reconciliação assistida do histórico bancário
-- [ ] Novos cartões e histórico do Santander
-- [ ] Proteções de edição, exclusão e restauração
-- [ ] Validação final e publicação
-
-## 3. Fases Implementadas
-
-### Fase 1 — Fundação: Cadastro de Origens
-**Objetivo:** Criar infraestrutura de fontes de capital (próprio e bancário).
-
-**Entidades/Campos:**
-- `capitalSources[]` — `id, type ('own'|'bank'), name`
-- Bank: `receivedAmount, monthlyRate, totalInstallments, installmentValue, totalToPay, additionalFees, startDate, status, totalPaidToBank, paidInstallments, monthlyReserve, amortizationFund`
-
-**DoD:**
-- [x] Aba "Origens" na navegação
-- [x] CRUD de origens (Próprio/Banco)
-- [x] Migração automática: cria "Capital Próprio" para dados antigos
-- [x] Persistência no localStorage
-- [x] Backup/restore inclui `capitalSources`
-
-### Fase 2 — Vinculação: Caixa com Origem
-**Objetivo:** Vincular movimentações de caixa a origens de capital.
-
-**Entidades/Campos:**
-- `fundsTransactions[].sourceId` — vincula transação a uma origem
-
-**DoD:**
-- [x] Dropdown de origem no formulário "Movimentar Caixa"
-- [x] Validação de retirada por origem (`getCapitalBalance`)
-- [x] Histórico mostra nome da origem
-- [x] `sourceId` salvo em novas transações
-- [x] Transações antigas sem `sourceId` compatíveis
-
-### Fase 3 — Empréstimos Vinculados
-**Objetivo:** Vincular empréstimos a origens de capital.
-
-**Entidades/Campos:**
-- `loans[].sourceId` — vincula empréstimo a uma origem
-
-**DoD:**
-- [x] Dropdown de origem no formulário "Novo Empréstimo"
-- [x] Validação: valor ≤ saldo da origem selecionada
-- [x] Origem exibida no card do empréstimo
-- [x] Origem incluída no extrato (Copiar)
-- [x] Refatoração: 3 funções `get*Balance` → 1 `getCapitalBalance`
-
-### Fase 4 — Gestão do Passivo Bancário
-**Objetivo:** Rastrear pagamentos ao banco e projeção de quitação.
-
-**Entidades/Campos:**
-- `bankPayments[]` — `id, date, amount, sourceId, type ('installment'|'amortization')`
-
-**DoD:**
-- [x] Seção "🏦 Resumo Bancário" no Painel
-- [x] Card com: pago/restante, parcelas (barra de progresso), previsão de quitação
-- [x] Formulário "Pagar Banco" (Parcela / Amortização)
-- [x] Formulário "Amortizar" (usa fundo acumulado)
-- [x] `paidInstallments` e `totalPaidToBank` atualizados automaticamente
-- [x] Backup/restore inclui `bankPayments`
-
-### Fase 5 — Separação de Lucro Real
-**Objetivo:** Diferenciar lucro real de capital comprometido com bancos.
-
-**Entidades/Campos:**
-- `globalStats.realProfit` — lucro de capital próprio + excedente após quitação bancária
-- `globalStats.committedCapital` — juros de clientes reservados para pagar bancos
-- `globalStats.bankDetails[]` — estatísticas por banco (juros gerados, amortização, dívida restante)
-- `globalStats.ownInterestReceived` — juros de empréstimos de capital próprio
-
-**DoD:**
-- [x] Cards "🟢 Lucro Real" e "🟡 Capital Comprometido" no Painel
-- [x] Cards só aparecem quando há origens bancárias
-- [x] "Juros Gerados" no Resumo Bancário
-- [x] Sem bancos → painel original preservado
-
-### Fase 6 — Calculadora de Taxa
-**Objetivo:** Sugerir taxa de juros para cobrir custo do banco + margem de lucro.
-
-**DoD:**
-- [x] Botão "💡 Sugerir taxa" no formulário de empréstimo (só para origem bancária)
-- [x] Slider de lucro desejado: 5%, 10%, 13%, 15%, 20%
-- [x] Cálculo: taxa = custo banco + lucro desejado
-- [x] Preview: juros mensais estimados (R$)
-- [x] Botão "Aplicar X%" preenche campo juros
-
-## 4. Regras de Negócio Críticas
-
-### 4.1 `getCapitalBalance(sourceId)`
-Função unificada que calcula o saldo disponível de uma origem:
-1. Soma transações do caixa vinculadas à origem (para `own`: inclui transações sem `sourceId` vinculadas ao `own-default`)
-2. Subtrai empréstimos ativos vinculados à origem
-3. Para bancos: adiciona `receivedAmount` como base
-4. Retorna o saldo disponível para novos empréstimos/retiradas
-
-### 4.2 Lucro Real vs Capital Comprometido (Fase 5)
-- **Lucro Real** = amortização total + juros de capital próprio + juros bancários excedentes (após quitar o banco)
-- **Capital Comprometido** = soma dos juros de clientes vinculados a bancos (limitado à dívida restante do banco)
-- Sem bancos no sistema → painel original, sem alteração visual
-
-### 4.3 Calculadora de Taxa (Fase 6)
-- Aparece SOMENTE quando a origem selecionada é tipo `bank`
-- `taxaSugerida = bank.monthlyRate + desiredProfit`
-- `jurosMensaisEstimados = valorEmprestimo × taxaSugerida / 100`
-
-## 5. Estrutura de Arquivos
-
-### Atual (Parte A)
-```
-AGEmp/
-├── index.html                  ← entry point
-├── AGEmp.html                  ← original (preservado)
-├── assets/css/style.css        ← CSS customizado
-├── js/
-│   ├── utils.js                ← formatMoney, formatDate, capitalize, generateId
-│   ├── icons.js                ← IconEdit, IconDelete, IconBank
-│   ├── app.js                  ← App() + todos os componentes (~1235 linhas)
-│   ├── main.js                 ← ReactDOM.createRoot + render
-│   └── components/             ← vazio
-├── docs/
-│   └── plan.md                 ← este arquivo
-└── .playwright-mcp/            ← testes
-```
-
-### Alvo (após Parte B)
-```
-AGEmp/
-├── index.html
-├── AGEmp.html                  ← preservado
-├── assets/css/style.css
-├── js/
-│   ├── utils.js
-│   ├── icons.js
-│   ├── components/
-│   │   ├── SourcesList.js      ← aba Origens + formulário
-│   │   ├── ClientsList.js      ← lista + criar cliente
-│   │   ├── ClientView.js       ← detalhe cliente, empréstimos, calculadora
-│   │   └── Dashboard.js        ← painel, caixa, resumo bancário, lucro real
-│   ├── app.js                  ← App() ~reduzido: estado, effects, globalStats, shell
-│   └── main.js
-├── docs/plan.md
-└── .playwright-mcp/
-```
-
-## 6. Mapa de data-testid
-
-| data-testid | Local | Descrição |
-|---|---|---|
-| `nav-painel` | Navegação | Aba Painel |
-| `nav-origens` | Navegação | Aba Origens |
-| `nav-clientes` | Navegação | Aba Clientes |
-| `dash-total-disponivel` | Painel | Card Total Disponível |
-| `dash-total-na-rua` | Painel | Card Total na Rua |
-| `dash-lucro-real` | Painel | Card Lucro Real (só com bancos) |
-| `dash-capital-comprometido` | Painel | Card Capital Comprometido (só com bancos) |
-| `dash-pendentes` | Painel | Indicador Falta Receber |
-| `caixa-origem-select` | Painel | Dropdown origem do caixa |
-| `caixa-valor-input` | Painel | Input valor do caixa |
-| `caixa-btn-add` | Painel | Botão + Adicionar |
-| `caixa-btn-remove` | Painel | Botão - Retirar |
-| `banco-btn-pagar` | Resumo Bancário | Botão + Pagar Banco |
-| `banco-btn-amortizar` | Resumo Bancário | Botão Amortizar |
-| `banco-pay-date` | Resumo Bancário | Data pagamento banco |
-| `banco-pay-amount` | Resumo Bancário | Valor pagamento banco |
-| `banco-pay-btn-registrar` | Resumo Bancário | Botão Registrar pgto |
-| `backup-btn-salvar` | Painel | Botão Salvar Backup |
-| `backup-btn-importar` | Painel | Botão Importar |
-| `clientes-input-nome` | Clientes | Input nome cliente |
-| `clientes-btn-criar` | Clientes | Botão Criar cliente |
-| `cliente-btn-emprestimo` | Visão Cliente | Botão + Empréstimo |
-| `emprestimo-form-origem` | Visão Cliente | Dropdown origem empréstimo |
-| `emprestimo-form-valor` | Visão Cliente | Input valor empréstimo |
-| `emprestimo-form-juros` | Visão Cliente | Input juros empréstimo |
-| `emprestimo-btn-salvar` | Visão Cliente | Botão Salvar empréstimo |
-| `emprestimo-btn-sugerir-taxa` | Visão Cliente | Botão abrir calculadora |
-| `ratecalc-profit-{v}` | Visão Cliente | Botões slider lucro (5,10,13,15,20) |
-| `ratecalc-btn-aplicar` | Visão Cliente | Botão aplicar taxa |
-| `origens-btn-nova` | Origens | Botão + Nova Origem |
-| `origens-form-nome` | Origens | Input nome origem |
-| `origens-form-tipo-proprio` | Origens | Botão tipo Próprio |
-| `origens-form-tipo-banco` | Origens | Botão tipo Banco |
-
-## 7. Como Rodar Localmente
-
-```bash
-cd AGEmp
 python -m http.server 8080
-# Abrir http://localhost:8080/index.html
 ```
 
-### GitHub Pages
-Compatível — basta publicar a pasta `AGEmp/`. Como não há backend, o backup é manual (exportar/importar arquivo `.txt`). O `localStorage` é vinculado ao domínio do GitHub Pages.
-
-## 8. Backlog Opcional
-
-- Extrair hooks para `js/hooks/` (useLocalStorage, useGlobalStats)
-- Converter para PWA (manifest.json + service worker)
-- Adicionar `git` e versionamento
-- Migrar para React com build (Vite) para melhor performance
-- Adicionar testes unitários (Jest + Testing Library)
-- Internacionalização (i18n)
-- Suporte a múltiplos usuários (Firebase)
-- Gráficos de evolução financeira (Chart.js)
+O site continua estático e compatível com GitHub Pages. O `localStorage` pertence ao domínio publicado; por isso a versão em produção só deve ser alterada depois da homologação do backup corrigido.
