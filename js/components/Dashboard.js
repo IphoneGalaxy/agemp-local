@@ -1,7 +1,7 @@
 
             // --- COMPONENTE PAINEL ---
             const Dashboard = ({ onExport, onImport, state, actions, utils }) => {
-                const { globalStats, capitalSources, clients, fundsTransactions, bankPayments } = state;
+                const { globalStats, capitalSources, clients, fundsTransactions, bankPayments, historicalInterestAllocations } = state;
                 const { setFundsTransactions } = actions;
                 const { showToast, getCapitalBalance, getSourceSummary } = utils;
                 const [addAmount, setAddAmount] = useState('');
@@ -228,6 +228,17 @@
                                     {mismatchIssues.length > 0 && <p>• {mismatchIssues.length} {mismatchIssues.length === 1 ? 'operação' : 'operações'} com origem do valor divergente</p>}
                                 </div>
                                 <p className="text-[10px] text-amber-700 mt-3">Revise esses itens antes de autorizar qualquer exclusão definitiva.</p>
+                            </div>
+                        )}
+
+                        {historicalInterestAllocations?.length > 0 && (
+                            <div data-testid="historical-interest-note" className="bg-emerald-50 rounded-2xl p-5 shadow-sm border border-emerald-200">
+                                <h3 className="text-base font-bold text-emerald-900 mb-1">✅ Juros históricos reconciliados</h3>
+                                <p className="text-xs text-emerald-800">
+                                    {historicalInterestAllocations.length} registros, totalizando {formatMoney(FinanceEngine.sumCents(historicalInterestAllocations, item => item.amount) / 100)},
+                                    correspondem aos juros recebidos de Leal e Mello e já utilizados nas operações do Santander.
+                                </p>
+                                <p className="text-[10px] text-emerald-700 mt-2">Esse valor permanece no histórico e não está disponível novamente no fundo.</p>
                             </div>
                         )}
 

@@ -6,6 +6,7 @@
             const [toastMessage, setToastMessage] = useState('');
             const [capitalSources, setCapitalSources] = useState([]);
             const [bankPayments, setBankPayments] = useState([]);
+            const [historicalInterestAllocations, setHistoricalInterestAllocations] = useState([]);
             const [isHydrated, setIsHydrated] = useState(false);
 
             const getSourceSummary = (sourceId) => FinanceEngine.getSourceSummary({
@@ -39,6 +40,7 @@
                     setClients(migrated.clients);
                     setCapitalSources(migrated.capitalSources);
                     setBankPayments(migrated.bankPayments);
+                    setHistoricalInterestAllocations(migrated.historicalInterestAllocations || []);
                 } catch (error) {
                     const emptyData = FinanceEngine.migrateData({});
                     setCapitalSources(emptyData.capitalSources);
@@ -56,9 +58,10 @@
                     fundsTransactions,
                     clients,
                     capitalSources,
-                    bankPayments
+                    bankPayments,
+                    historicalInterestAllocations
                 }));
-            }, [isHydrated, fundsTransactions, clients, capitalSources, bankPayments]);
+            }, [isHydrated, fundsTransactions, clients, capitalSources, bankPayments, historicalInterestAllocations]);
 
             // --- SISTEMA DE BACKUP ---
             const handleExportBackup = () => {
@@ -67,7 +70,8 @@
                     fundsTransactions,
                     clients,
                     capitalSources,
-                    bankPayments
+                    bankPayments,
+                    historicalInterestAllocations
                 };
                 const dataStr = JSON.stringify(data, null, 2);
                 const blob = new Blob([dataStr], { type: 'text/plain' });
@@ -116,6 +120,7 @@
                             setCapitalSources(migrated.capitalSources);
                             setBankPayments(migrated.bankPayments);
                             setClients(migrated.clients);
+                            setHistoricalInterestAllocations(migrated.historicalInterestAllocations || []);
                             showToast(validation.warnings.length > 0
                                 ? '✅ Backup restaurado com alertas preservados para revisão.'
                                 : '✅ Backup restaurado com sucesso!');
@@ -139,7 +144,7 @@
             }), [clients, fundsTransactions, capitalSources, bankPayments, referenceDate]);
 
 
-            const state = { globalStats, capitalSources, clients, fundsTransactions, bankPayments };
+            const state = { globalStats, capitalSources, clients, fundsTransactions, bankPayments, historicalInterestAllocations };
             const actions = { setFundsTransactions, setCapitalSources, setBankPayments, setClients, setSelectedClient };
             const utils = { showToast, getCapitalBalance, getSourceSummary };
 
