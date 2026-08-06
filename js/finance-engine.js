@@ -915,6 +915,11 @@
                     totalPaidToBank: fromCents(toCents(source.totalPaidToBank)),
                     monthlyReserve: fromCents(toCents(source.monthlyReserve)),
                     amortizationFund: fromCents(toCents(source.amortizationFund)),
+                    installments: (source.installments || []).map(item => ({
+                        ...item,
+                        number: Number(item.number),
+                        amount: fromCents(toCents(item.amount))
+                    })),
                     officialBalanceSnapshots: (source.officialBalanceSnapshots || []).map(snapshot => ({
                         ...snapshot,
                         amount: fromCents(toCents(snapshot.amount))

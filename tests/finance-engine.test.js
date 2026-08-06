@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const FinanceEngine = require('../js/finance-engine.js');
+const BankDocumentImporter = require('../js/bank-document-importer.js');
 
 const ownSource = { id: 'own-default', type: 'own', name: 'Capital Próprio' };
 const bankSource = {
@@ -143,6 +144,36 @@ test('usa vencimentos individuais quando o contrato os informa', () => {
         installments: [{ number: 1, dueDate: '2026-09-03' }, { number: 2, dueDate: '2026-10-05' }, { number: 3, dueDate: '2026-11-03' }]
     }});
     assert.equal(summary.forecastDate, '2026-11-03');
+});
+
+test('importa contrato 99Pay como rascunho com cronograma individual e sem pagamentos', () => {
+    const draft = BankDocumentImporter.parse(`CÉDULA DE CRÉDITO BANCÁRIO Nº. abc99
+        Valor Principal*: R$5.043,90 Valor Liberado: R$5.000,00 IOF: R$43,90
+        Juros Remuneratórios: Juros pré-fixados de 4,4900 % a.m.
+        Custo Efetivo Total (CET) Mensal: 5,0333%
+        1 03/09/2026 R$1.831,75 2 05/10/2026 R$1.831,75 3 03/11/2026 R$1.831,75
+        Data de Emissão desta CÉDULA: 06/08/2026`);
+    assert.equal(draft.provider, '99Pay');
+    assert.equal(draft.source.receivedAmount, 5000);
+    assert.equal(draft.source.financedAmount, 5043.9);
+    assert.deepEqual(draft.source.installments.map(item => item.dueDate), ['2026-09-03', '2026-10-05', '2026-11-03']);
+    assert.equal(draft.source.importMetadata.importMode, 'draft_review_required');
+});
+
+test('importa demonstrativo Santander sem converter movimentações em confirmações', () => {
+    const draft = BankDocumentImporter.parse(`Banco Santander (Brasil) S.A. Documento Descritivo de Crédito
+        Nr. Contrato: 796465673 Dt. Formalização: 01/06/2026
+        Valor Solicitado: 11.500,00 Vlr. Financiado: 11.854,41 IOF: 354,41
+        Dt. 1º Vcto: 05/07/2026 Nr. Parcelas: 61
+        1 05/07/2026 06/07/2026 302,47 297,32 5,15 Custo Efetivo Total CET: 1,67 % a.m.
+        Tx. Efet. do contrato: 1,5268 % a.m. Movimentações Efetuadas Liquidação`);
+    assert.equal(draft.provider, 'Santander');
+    assert.equal(draft.source.contractNumber, '796465673');
+    assert.equal(draft.source.totalInstallments, 61);
+    assert.equal(draft.source.installments.length, 61);
+    assert.equal(draft.source.firstDueDate, '2026-07-05');
+    assert.equal(draft.source.installmentValue, 302.47);
+    assert.match(draft.warnings[0], /Nenhum pagamento/);
 });
 
 test('migra dados antigos para a versão 2 e vincula registros sem origem ao Capital Próprio', () => {
