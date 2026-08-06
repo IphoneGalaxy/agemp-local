@@ -78,6 +78,7 @@
                                     const bankSourceSummary = getSourceSummary(bank.id);
                                     const bd = globalStats.bankDetails?.find(b => b.sourceId === bank.id);
                                     const juros = bd ? bd.interestFromClients : 0;
+                                    const recovery = bd?.recovery;
                                     return (
                                         <div key={bank.id} data-testid="dash-card-banco" className="bg-purple-600 text-white rounded-2xl p-5 shadow-lg">
                                             <p className="text-purple-100 text-sm font-medium">🏦 {bank.name}</p>
@@ -105,6 +106,31 @@
                                                 <span>Próx: nº {contract.nextInstallmentNumber || '—'} · {formatMoney(bank.installmentValue)}</span>
                                                 <span>Previsão: {contract.forecastDate ? formatDate(contract.forecastDate).slice(3) : 'A confirmar'}</span>
                                             </div>
+                                            {recovery && (
+                                                <div data-testid={`bank-recovery-${bank.id}`} className="mt-3 rounded-xl bg-white/15 p-3 text-left">
+                                                    <p className="text-[10px] font-black uppercase tracking-wide text-purple-100">Recuperação da operação</p>
+                                                    <div className="grid grid-cols-2 gap-2 mt-2 text-center">
+                                                        <div>
+                                                            <p className="text-[9px] text-purple-200">Resultado de caixa</p>
+                                                            <p className="font-bold">{formatMoney(recovery.currentNetCash)}</p>
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-[9px] text-purple-200">Principal exposto</p>
+                                                            <p className="font-bold">{formatMoney(recovery.outstandingClientPrincipal)}</p>
+                                                        </div>
+                                                    </div>
+                                                    <p className="mt-2 text-[10px] text-purple-100">
+                                                        {recovery.isCashPositive
+                                                            ? `✅ Caixa positivo desde ${formatDate(recovery.breakEvenDate)}.`
+                                                            : recovery.breakEvenDate
+                                                                ? `⏳ Equilíbrio estimado em ${formatDate(recovery.breakEvenDate)}.`
+                                                                : '⏳ Sem previsão: faltam recebimentos ou vencimentos para calcular.'}
+                                                    </p>
+                                                    {!recovery.isCashPositive && recovery.ownCapitalStillToRecover > 0 && (
+                                                        <p className="text-[9px] text-purple-200 mt-1">Falta recuperar: {formatMoney(recovery.ownCapitalStillToRecover)}</p>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}
