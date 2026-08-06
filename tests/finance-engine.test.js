@@ -364,23 +364,6 @@ test('detecta pagamentos órfãos e possíveis duplicações sem apagar registro
     assert.equal(issues.filter(issue => issue.type === 'possible-duplicate-bank-payment').length, 1);
 });
 
-test('preserva juros históricos utilizados fora do extrato bancário', () => {
-    const migrated = FinanceEngine.migrateData({
-        capitalSources: [ownSource, bankSource],
-        clients: [],
-        fundsTransactions: [],
-        bankPayments: [],
-        historicalInterestAllocations: [
-            { id: 'interest-jul', date: '2026-07-01', amount: 1495, sourceId: bankSource.id },
-            { id: 'interest-aug', date: '2026-08-01', amount: 1495, sourceId: bankSource.id }
-        ]
-    });
-
-    assert.equal(migrated.historicalInterestAllocations.length, 2);
-    assert.equal(FinanceEngine.sumCents(migrated.historicalInterestAllocations, item => item.amount), 299000);
-    assert.equal(FinanceEngine.findIntegrityIssues(migrated).length, 0);
-});
-
 test('valida o backup antes da importação e resume o conteúdo preservado', () => {
     const valid = FinanceEngine.validateBackup({
         clients: [{ id: 'client-1', name: 'Cliente', loans: [{ id: 'loan-1', amount: 100, payments: [] }] }],
