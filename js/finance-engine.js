@@ -10,6 +10,7 @@
     'use strict';
 
     const SCHEMA_VERSION = 2;
+    const EXPORT_TYPE = 'agemp-local-finance-backup';
     const DEFAULT_OWN_SOURCE = Object.freeze({
         id: 'own-default',
         type: 'own',
@@ -843,7 +844,7 @@
             sourceId: isMissingSourceId(transaction.sourceId) ? defaultOwnId : transaction.sourceId
         }));
 
-        const bankPayments = (Array.isArray(raw.bankPayments) ? raw.bankPayments : []).map(payment => ({
+        let bankPayments = (Array.isArray(raw.bankPayments) ? raw.bankPayments : []).map(payment => ({
             ...payment,
             amount: fromCents(toCents(payment.amount)),
             status: payment.status || BANK_PAYMENT_STATUS.CONFIRMED,
@@ -863,17 +864,88 @@
             fundingBreakdown: getFundingBreakdown(payment).map(part => ({
                 ...part,
                 amount: fromCents(toCents(part.amount))
-            }))
+            })),
+            ...(payment.type === 'installment' && payment.status === BANK_PAYMENT_STATUS.CONFIRMED
+                ? { confirmationSource: payment.confirmationSource || 'manual' }
+                : {})
         }));
+
+        let historicalInterestAllocations = (Array.isArray(raw.historicalInterestAllocations)
+            ? raw.historicalInterestAllocations
+            : []).map(record => ({
+            ...record,
+            amount: fromCents(toCents(record.amount)),
+            sourceId: record.sourceId || null,
+            purpose: record.purpose || 'bank-interest-used'
+        }));
+
+        // Backups created before the reconciliation stored the two monthly
+        // interest allocations as bank payments with an unknown source. They
+        // are historical cash-use records, not new bank payments and must not
+        // remain in the bank statement or generate integrity alerts.
+        const knownSourceIds = new Set(sourceInput.map(source => source.id));
+        const bankSources = sourceInput.filter(source => source.type === 'bank');
+        const legacyInterestPayments = bankSources.length === 1
+            ? bankPayments.filter(payment => (
+                payment.legacyOrphan === true && !knownSourceIds.has(payment.sourceId)
+            ))
+            : [];
+
+        if (legacyInterestPayments.length > 0) {
+            const bankSource = bankSources[0];
+            const existingLegacyIds = new Set(
+                historicalInterestAllocations.map(record => record.legacyPaymentId).filter(Boolean)
+            );
+
+            historicalInterestAllocations = [
+                ...historicalInterestAllocations,
+                ...legacyInterestPayments
+                    .filter(payment => !existingLegacyIds.has(payment.id))
+                    .map(payment => ({
+                        id: `historical-${payment.id}`,
+                        date: payment.date || null,
+                        amount: payment.amount,
+                        sourceId: bankSource.id,
+                        purpose: 'bank-interest-used',
+                        legacyPaymentId: payment.id,
+                        description: 'Juros históricos recebidos e já utilizados'
+                    }))
+            ];
+
+            const legacyIds = new Set(legacyInterestPayments.map(payment => payment.id));
+            bankPayments = bankPayments.filter(payment => !legacyIds.has(payment.id));
+        }
 
         return {
             schemaVersion: SCHEMA_VERSION,
             fundsTransactions,
             clients,
             capitalSources: sourceInput,
-            bankPayments
+            bankPayments,
+            historicalInterestAllocations
         };
     };
+
+    const createBackup = ({
+        fundsTransactions = [],
+        clients = [],
+        capitalSources = [],
+        bankPayments = [],
+        historicalInterestAllocations = []
+    } = {}) => ({
+        exportType: EXPORT_TYPE,
+        schemaVersion: SCHEMA_VERSION,
+        exportedAt: new Date().toISOString(),
+        source: 'agemp-local',
+        ...migrateData({
+            schemaVersion: SCHEMA_VERSION,
+            fundsTransactions,
+            clients,
+            capitalSources,
+            bankPayments,
+            historicalInterestAllocations
+        })
+    });
 
     const findIntegrityIssues = (data) => {
         const normalized = migrateData(data);
@@ -1015,6 +1087,7 @@
 
     return Object.freeze({
         SCHEMA_VERSION,
+        EXPORT_TYPE,
         DEFAULT_OWN_SOURCE,
         BANK_PAYMENT_STATUS,
         toCents,
@@ -1038,6 +1111,7 @@
         calculateMonthlyBankSettlement,
         calculateGlobalStats,
         migrateData,
+        createBackup,
         findIntegrityIssues,
         validateBackup,
         localIsoDate
