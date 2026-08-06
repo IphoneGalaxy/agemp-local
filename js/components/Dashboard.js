@@ -271,7 +271,7 @@
                         {/* Segurança e Backup */}
                         <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
                             <h3 className="text-lg font-bold text-gray-800 mb-1">Segurança e Backup</h3>
-                            <p className="text-xs text-gray-500 mb-4">Salve seus dados num arquivo de texto. Se trocar de celular ou limpar o navegador, você poderá restaurá-los aqui.</p>
+                            <p className="text-xs text-gray-500 mb-4">Salve seus dados em um backup JSON. Se trocar de celular ou limpar o navegador, você poderá restaurá-los aqui. Backups antigos em TXT continuam aceitos.</p>
                             
                             <div className="flex gap-2">
                                 <button data-testid="backup-btn-salvar" onClick={onExport} className="flex-1 bg-blue-50 text-blue-800 py-3 rounded-xl font-bold shadow-sm text-sm border border-blue-200 active:bg-blue-100">

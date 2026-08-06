@@ -574,6 +574,71 @@ test('cria backup JSON canônico sem usar documento externo para confirmar parce
     assert.equal(confirmed.bankPayments[0].confirmationSource, 'manual');
 });
 
+test('backup e restauração preservam o cenário completo 99Pay → Mello sem confirmar parcelas', () => {
+    const original = {
+        capitalSources: [ownSource, {
+            id: 'bank-99pay',
+            type: 'bank',
+            name: '99Pay',
+            contractNumber: 'abc99',
+            receivedAmount: 5000,
+            financedAmount: 5043.9,
+            iofAmount: 43.9,
+            monthlyRate: 4.49,
+            cetMonthly: 5.0333,
+            totalInstallments: 3,
+            installmentValue: 1831.75,
+            totalToPay: 5495.25,
+            installments: [
+                { number: 1, dueDate: '2026-09-03', amount: 1831.75 },
+                { number: 2, dueDate: '2026-10-05', amount: 1831.75 },
+                { number: 3, dueDate: '2026-11-03', amount: 1831.75 }
+            ],
+            importMetadata: { provider: '99Pay', importMode: 'draft_review_required' }
+        }],
+        clients: [{ id: 'mello', name: 'Mello', loans: [{
+            id: 'mello-99', date: '2026-08-06', amount: 5000, interestRate: 20, sourceId: 'bank-99pay',
+            payments: [{ id: 'mello-sep', date: '2026-09-03', amount: 1000, kind: 'interest_only' }]
+        }]}],
+        fundsTransactions: [{ id: 'own-complement', date: '2026-09-03', amount: -831.75, sourceId: ownSource.id }],
+        bankPayments: [{
+            id: '99-first', date: '2026-09-03', amount: 1831.75, sourceId: 'bank-99pay', type: 'installment',
+            installmentNumber: 1, status: 'withheld_pending_bank',
+            fundingBreakdown: [{ sourceId: 'bank-99pay', amount: 1000 }, { sourceId: ownSource.id, amount: 831.75, fundsTransactionId: 'own-complement' }]
+        }]
+    };
+
+    const restored = FinanceEngine.migrateData(JSON.parse(JSON.stringify(FinanceEngine.createBackup(original))));
+    const bank = restored.capitalSources.find(source => source.id === 'bank-99pay');
+    const loan = restored.clients[0].loans[0];
+
+    assert.deepEqual(bank.installments.map(item => [item.number, item.dueDate, item.amount]), [[1, '2026-09-03', 1831.75], [2, '2026-10-05', 1831.75], [3, '2026-11-03', 1831.75]]);
+    assert.equal(bank.importMetadata.provider, '99Pay');
+    assert.equal(loan.sourceId, bank.id);
+    assert.equal(loan.payments[0].kind, FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY);
+    assert.equal(restored.bankPayments[0].status, FinanceEngine.BANK_PAYMENT_STATUS.WITHHELD_PENDING_BANK);
+    assert.equal(restored.bankPayments[0].confirmationDate, undefined);
+    assert.equal(FinanceEngine.calculateOperationRecovery({ bank, clients: restored.clients, bankPayments: restored.bankPayments, referenceDate: '2026-09-04' }).outstandingClientPrincipal, 5000);
+});
+
+test('backup preserva cronograma Santander e quitação exclusiva do principal', () => {
+    const backup = FinanceEngine.createBackup({
+        capitalSources: [ownSource, { ...bankSource, installments: [{ number: 1, dueDate: '2026-07-05', amount: 302.47 }, { number: 2, dueDate: '2026-08-05', amount: 302.47 }] }],
+        clients: [{ id: 'leal', name: 'Leal', loans: [{
+            id: 'leal-santander', date: '2026-06-01', amount: 5000, interestRate: 13, sourceId: bankSource.id,
+            payments: [{ id: 'interest', date: '2026-07-05', amount: 650, kind: 'interest_only' }, { id: 'settlement', date: '2026-08-05', amount: 5000, kind: 'principal_settlement' }]
+        }]}],
+        fundsTransactions: [], bankPayments: []
+    });
+    const restored = FinanceEngine.migrateData(JSON.parse(JSON.stringify(backup)));
+    const loan = restored.clients[0].loans[0];
+
+    assert.deepEqual(restored.capitalSources[1].installments.map(item => item.dueDate), ['2026-07-05', '2026-08-05']);
+    assert.equal(loan.payments[1].kind, FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT);
+    assert.equal(FinanceEngine.calculateLoan(loan).currentPrincipal, 0);
+    assert.equal(FinanceEngine.validateBackup(backup).valid, true);
+});
+
 test('valida o backup antes da importação e resume o conteúdo preservado', () => {
     const valid = FinanceEngine.validateBackup({
         clients: [{ id: 'client-1', name: 'Cliente', loans: [{ id: 'loan-1', amount: 100, payments: [] }] }],

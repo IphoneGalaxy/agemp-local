@@ -947,7 +947,8 @@
                     installments: (source.installments || []).map(item => ({
                         ...item,
                         number: Number(item.number),
-                        amount: fromCents(toCents(item.amount))
+                        amount: fromCents(toCents(item.amount)),
+                        dueDate: item.dueDate || null
                     })),
                     officialBalanceSnapshots: (source.officialBalanceSnapshots || []).map(snapshot => ({
                         ...snapshot,
@@ -1000,7 +1001,11 @@
                     sourceId: isMissingSourceId(loan.sourceId) ? defaultOwnId : loan.sourceId,
                     payments: (loan.payments || []).map(payment => ({
                         ...payment,
-                        amount: fromCents(toCents(payment.amount))
+                        amount: fromCents(toCents(payment.amount)),
+                        // Mantém explícita a modalidade escolhida no lançamento.
+                        // Backups antigos sem esse campo continuam sendo tratados
+                        // pelo motor como pagamento comum (automatic).
+                        kind: payment.kind || payment.paymentType || undefined
                     }))
                 }))
             };
