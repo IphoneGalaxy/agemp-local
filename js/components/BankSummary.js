@@ -166,7 +166,7 @@
                             dueDate: FinanceEngine.getInstallmentDueDate(bank.firstDueDate, nextNormalNumber),
                             ...(installmentStatus === FinanceEngine.BANK_PAYMENT_STATUS.WITHHELD_PENDING_BANK
                                 ? { withheldDate: operationDate }
-                                : { confirmationDate: operationDate }),
+                                : { confirmationDate: operationDate, confirmationSource: 'manual' }),
                             fundingBreakdown
                         });
                     }
@@ -224,10 +224,15 @@
                     const confirmationDate = FinanceEngine.localIsoDate(new Date());
                     setBankPayments(bankPayments.map(payment => (
                         payment.id === paymentId
-                            ? { ...payment, status: FinanceEngine.BANK_PAYMENT_STATUS.CONFIRMED, confirmationDate }
+                            ? {
+                                ...payment,
+                                status: FinanceEngine.BANK_PAYMENT_STATUS.CONFIRMED,
+                                confirmationDate,
+                                confirmationSource: 'manual'
+                            }
                             : payment
                     )));
-                    showToast('✅ Repasse confirmado sem duplicar o pagamento.');
+                    showToast('✅ Repasse confirmado manualmente, sem duplicar o pagamento.');
                 };
 
                 const removeBankOperation = (payment) => {
