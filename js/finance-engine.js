@@ -21,6 +21,13 @@
         WITHHELD_PENDING_BANK: 'withheld_pending_bank',
         CONFIRMED: 'confirmed'
     });
+    const CLIENT_PAYMENT_KIND = Object.freeze({
+        AUTOMATIC: 'automatic',
+        INTEREST_ONLY: 'interest_only',
+        PRINCIPAL_AMORTIZATION: 'principal_amortization',
+        PRINCIPAL_SETTLEMENT: 'principal_settlement',
+        INTEREST_AND_PRINCIPAL_SETTLEMENT: 'interest_and_principal_settlement'
+    });
 
     const isMissingSourceId = (sourceId) => sourceId === undefined || sourceId === null || sourceId === '';
 
@@ -122,9 +129,9 @@
         const processedPayments = sortedPayments.map(payment => {
             const paymentCents = Math.max(0, toCents(payment.amount));
             const interestDueCents = calculateInterestCents(principalCents, loan?.interestRate);
-            const mode = payment.kind || payment.paymentType || 'automatic';
-            const principalOnly = mode === 'principal_settlement' || mode === 'principal_amortization';
-            const interestOnly = mode === 'interest_only';
+            const mode = payment.kind || payment.paymentType || CLIENT_PAYMENT_KIND.AUTOMATIC;
+            const principalOnly = mode === CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT || mode === CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION;
+            const interestOnly = mode === CLIENT_PAYMENT_KIND.INTEREST_ONLY;
             const interestPaidCents = principalOnly ? 0 : Math.min(paymentCents, interestDueCents);
             const amountAfterInterestCents = interestOnly ? 0 : Math.max(0, paymentCents - interestPaidCents);
             const principalRecoveredCents = Math.min(principalCents, principalOnly ? paymentCents : amountAfterInterestCents);
@@ -1194,6 +1201,7 @@
         EXPORT_TYPE,
         DEFAULT_OWN_SOURCE,
         BANK_PAYMENT_STATUS,
+        CLIENT_PAYMENT_KIND,
         toCents,
         fromCents,
         sumCents,

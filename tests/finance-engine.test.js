@@ -128,6 +128,15 @@ test('permite quitar somente o principal sem cobrar juros no mesmo lançamento',
     assert.equal(result.currentPrincipal, 0);
 });
 
+test('registra juros e quitação total no mesmo lançamento sem deixar saldo artificial', () => {
+    const result = FinanceEngine.calculateLoan({ amount: 5000, interestRate: 20, payments: [
+        { date: '2026-09-03', amount: 6000, kind: FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_AND_PRINCIPAL_SETTLEMENT }
+    ]});
+    assert.equal(result.totalInterestReceived, 1000);
+    assert.equal(result.totalPrincipalRecovered, 5000);
+    assert.equal(result.currentPrincipal, 0);
+});
+
 test('usa vencimentos individuais quando o contrato os informa', () => {
     const summary = FinanceEngine.summarizeBankContract({ bank: {
         id: '99', totalInstallments: 3, installmentValue: 1831.75, firstDueDate: '2026-09-03',
