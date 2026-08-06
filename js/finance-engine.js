@@ -670,6 +670,34 @@
         };
     };
 
+    // Returns the explicit client-loan links for a bank operation.  This is
+    // intentionally based only on sourceId: legacy loans must never be
+    // attached to a bank just because their amount or client name looks alike.
+    const getBankOperationLinks = ({ bank, clients = [] }) => {
+        if (!bank?.id) return { sourceId: null, loans: [], clientCount: 0, outstandingPrincipal: 0, monthlyInterest: 0 };
+        const loans = [];
+        clients.forEach(client => (client.loans || []).forEach(loan => {
+            if (loan.sourceId !== bank.id) return;
+            const calculation = calculateLoan(loan);
+            loans.push({
+                clientId: client.id,
+                clientName: client.name || 'Cliente sem nome',
+                loanId: loan.id,
+                originalAmount: loan.amount,
+                outstandingPrincipal: calculation.currentPrincipal,
+                monthlyInterest: calculation.nextInterest,
+                isPaidOff: calculation.currentPrincipal <= 0
+            });
+        }));
+        return {
+            sourceId: bank.id,
+            loans,
+            clientCount: new Set(loans.map(loan => loan.clientId)).size,
+            outstandingPrincipal: fromCents(loans.reduce((total, loan) => total + toCents(loan.outstandingPrincipal), 0)),
+            monthlyInterest: fromCents(loans.filter(loan => !loan.isPaidOff).reduce((total, loan) => total + toCents(loan.monthlyInterest), 0))
+        };
+    };
+
     const calculateGlobalStats = ({
         clients = [],
         fundsTransactions = [],
@@ -849,7 +877,8 @@
                     clients,
                     bankPayments,
                     referenceDate
-                })
+                }),
+                operationLinks: getBankOperationLinks({ bank: source, clients })
             };
         });
 
@@ -1251,6 +1280,7 @@
         selectFinalInstallments,
         calculateMonthlyBankSettlement,
         calculateOperationRecovery,
+        getBankOperationLinks,
         calculateGlobalStats,
         migrateData,
         createBackup,

@@ -138,6 +138,17 @@ test('registra juros e quitação total no mesmo lançamento sem deixar saldo ar
     assert.equal(result.currentPrincipal, 0);
 });
 
+test('lista apenas vínculos explícitos de clientes para regularizar uma operação bancária', () => {
+    const links = FinanceEngine.getBankOperationLinks({ bank: bankSource, clients: bankLoanClients });
+    assert.equal(links.clientCount, 2);
+    assert.equal(links.outstandingPrincipal, 11500);
+    assert.equal(links.monthlyInterest, 1495);
+
+    const noLinks = FinanceEngine.getBankOperationLinks({ bank: { id: 'bank-99' }, clients: bankLoanClients });
+    assert.equal(noLinks.loans.length, 0);
+    assert.equal(noLinks.monthlyInterest, 0);
+});
+
 test('usa vencimentos individuais quando o contrato os informa', () => {
     const summary = FinanceEngine.summarizeBankContract({ bank: {
         id: '99', totalInstallments: 3, installmentValue: 1831.75, firstDueDate: '2026-09-03',

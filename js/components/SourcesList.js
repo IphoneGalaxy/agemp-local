@@ -196,6 +196,19 @@
                                                 </div>
                                                 <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1.5"><div className="bg-purple-500 h-1.5 rounded-full" style={{ width: `${Math.min(100, (bankContract.resolvedInPersonalControlCount / source.totalInstallments) * 100)}%` }}></div></div>
                                                 {bankContract.pendingNormalCount > 0 && <p className="text-[10px] text-amber-600 font-bold mt-1">{bankContract.pendingNormalCount} parcela descontada em folha</p>}
+                                                {(() => {
+                                                    const links = FinanceEngine.getBankOperationLinks({ bank: source, clients });
+                                                    return (
+                                                        <div className="mt-3 rounded-lg bg-purple-50 border border-purple-100 p-2.5 text-[10px] text-purple-800">
+                                                            <p className="font-bold">Operação com clientes</p>
+                                                            {links.loans.length > 0 ? <>
+                                                                <p className="mt-1">{links.clientCount} cliente{links.clientCount === 1 ? '' : 's'} · principal exposto: {formatMoney(links.outstandingPrincipal)}</p>
+                                                                <p className="mt-0.5">Juros mensais previstos: {formatMoney(links.monthlyInterest)}</p>
+                                                                <p className="mt-1 text-purple-600">{links.loans.map(link => `${link.clientName} (${formatMoney(link.outstandingPrincipal)})`).join(' · ')}</p>
+                                                            </> : <p className="mt-1 text-amber-700">Ainda não há cliente vinculado. Use a edição do empréstimo do cliente para definir esta origem.</p>}
+                                                        </div>
+                                                    );
+                                                })()}
                                             </div>
                                         )}
                                         <button data-testid={`source-remove-${source.id}`} onClick={() => {

@@ -24,6 +24,7 @@
                 const [confirmDeleteLoanId, setConfirmDeleteLoanId] = useState(null);
                 const [editingPayment, setEditingPayment] = useState(null); 
                 const [confirmDeletePaymentId, setConfirmDeletePaymentId] = useState(null); 
+                const [pendingLoanSourceChange, setPendingLoanSourceChange] = useState(null);
 
                 const paymentKindLabel = (kind) => ({
                     [FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY]: 'Somente juros',
@@ -78,16 +79,17 @@
                     showToast('🗑️ Contrato apagado.');
                 };
 
-                const handleSaveEditLoan = (e) => {
-                    e.preventDefault();
-                    const newAmount = Number(editingLoan.amount);
+                const applyLoanEdit = (loanEdit) => {
+                    const newAmount = Number(loanEdit.amount);
                     if (!newAmount || newAmount <= 0) return;
 
-                    const originalLoan = clientData.loans.find(l => l.id === editingLoan.id);
+                    const originalLoan = clientData.loans.find(l => l.id === loanEdit.id);
                     const diff = newAmount - originalLoan.amount; 
-                    if (diff > 0) {
-                        const sourceBalance = getCapitalBalance(originalLoan.sourceId || 'own-default');
-                        if (diff > sourceBalance) {
+                    const sourceChanged = loanEdit.sourceId !== originalLoan.sourceId;
+                    if (diff > 0 || sourceChanged) {
+                        const sourceBalance = getCapitalBalance(loanEdit.sourceId || 'own-default');
+                        const requiredBalance = sourceChanged ? newAmount : diff;
+                        if (requiredBalance > sourceBalance) {
                             showToast(`❌ Saldo insuficiente nesta origem (disp: ${formatMoney(sourceBalance)})`);
                             return;
                         }
@@ -97,14 +99,25 @@
                         if (c.id === clientData.id) {
                             return {
                                 ...c,
-                                loans: c.loans.map(l => l.id === editingLoan.id ? { ...l, date: editingLoan.date, amount: newAmount, interestRate: editingLoan.interestRate } : l)
+                                loans: c.loans.map(l => l.id === loanEdit.id ? { ...l, date: loanEdit.date, amount: newAmount, interestRate: loanEdit.interestRate, sourceId: loanEdit.sourceId } : l)
                             };
                         }
                         return c;
                     });
                     setClients(updatedClients);
                     setEditingLoan(null);
+                    setPendingLoanSourceChange(null);
                     showToast('✅ Contrato editado!');
+                };
+
+                const handleSaveEditLoan = (e) => {
+                    e.preventDefault();
+                    const originalLoan = clientData.loans.find(l => l.id === editingLoan.id);
+                    if (editingLoan.sourceId !== originalLoan.sourceId) {
+                        setPendingLoanSourceChange(editingLoan);
+                        return;
+                    }
+                    applyLoanEdit(editingLoan);
                 };
 
                 const handleAddPayment = (e) => {
@@ -229,6 +242,22 @@
                             </div>
                         )}
 
+                        {pendingLoanSourceChange && (() => {
+                            const previous = clientData.loans.find(loan => loan.id === pendingLoanSourceChange.id);
+                            const oldSource = capitalSources.find(source => source.id === previous?.sourceId);
+                            const newSource = capitalSources.find(source => source.id === pendingLoanSourceChange.sourceId);
+                            return (
+                                <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 text-center animate-fade-in shadow-sm">
+                                    <p className="text-amber-900 font-bold mb-1">Confirmar vínculo da operação?</p>
+                                    <p className="text-xs text-amber-800 mb-3">Este empréstimo passará de <b>{oldSource?.name || 'origem anterior'}</b> para <b>{newSource?.name || 'nova origem'}</b>. Os pagamentos existentes serão preservados, mas os indicadores de caixa e principal exposto serão recalculados.</p>
+                                    <div className="flex gap-2">
+                                        <button type="button" onClick={() => setPendingLoanSourceChange(null)} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-medium">Voltar</button>
+                                        <button type="button" onClick={() => applyLoanEdit(pendingLoanSourceChange)} className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-bold shadow-sm">Confirmar vínculo</button>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
                         <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 mb-6 text-center">
                             <p className="text-gray-500 text-sm font-medium mb-1">Dívida Principal (Todos contratos)</p>
                             <p className="text-3xl font-black text-gray-800">{formatMoney(clientData.currentDebt)}</p>
@@ -336,6 +365,10 @@
                                                 <input type="number" step="0.01" required value={editingLoan.amount} onChange={e => setEditingLoan({...editingLoan, amount: e.target.value})} className="flex-1 p-2 border rounded-lg text-sm" />
                                                 <input type="number" step="0.1" required value={editingLoan.interestRate} onChange={e => setEditingLoan({...editingLoan, interestRate: Number(e.target.value)})} placeholder="Juros %" className="w-16 p-2 border rounded-lg text-sm" />
                                             </div>
+                                            <select value={editingLoan.sourceId || ''} onChange={e => setEditingLoan({...editingLoan, sourceId: e.target.value})} className="w-full mb-2 p-2 border rounded-lg bg-white text-sm text-gray-700">
+                                                {capitalSources.map(source => <option key={source.id} value={source.id}>{source.type === 'bank' ? '🏦' : '💰'} {source.name}</option>)}
+                                            </select>
+                                            <p className="text-[10px] text-gray-500 mb-2">A origem só muda após sua confirmação. Isso não registra nenhum pagamento nem baixa de parcela.</p>
                                             <div className="flex gap-2">
                                                 <button type="button" onClick={() => setEditingLoan(null)} className="flex-1 py-1.5 bg-gray-200 rounded-lg text-xs font-bold">Cancelar</button>
                                                 <button type="submit" className="flex-1 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold">Salvar</button>
@@ -372,7 +405,7 @@
                                             )}
 
                                             <div className="flex gap-2 text-gray-400 mt-6">
-                                                <button onClick={() => setEditingLoan({id: loan.id, date: loan.date, amount: loan.amount, interestRate: loan.interestRate ?? 10})} className="hover:text-blue-600"><IconEdit /></button>
+                                                <button onClick={() => setEditingLoan({id: loan.id, date: loan.date, amount: loan.amount, interestRate: loan.interestRate ?? 10, sourceId: loan.sourceId || FinanceEngine.getDefaultOwnSourceId(capitalSources)})} className="hover:text-blue-600"><IconEdit /></button>
                                                 <button onClick={() => setConfirmDeleteLoanId(loan.id)} className="hover:text-red-500"><IconDelete /></button>
                                             </div>
                                         </div>
