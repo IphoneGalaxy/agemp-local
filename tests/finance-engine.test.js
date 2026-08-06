@@ -381,6 +381,66 @@ test('preserva juros históricos utilizados fora do extrato bancário', () => {
     assert.equal(FinanceEngine.findIntegrityIssues(migrated).length, 0);
 });
 
+test('migra registros legacyOrphan de juros para o histórico e não os exporta como pagamentos bancários', () => {
+    const migrated = FinanceEngine.migrateData({
+        capitalSources: [ownSource, bankSource],
+        clients: [],
+        fundsTransactions: [],
+        bankPayments: [
+            { id: 'legacy-installment', date: '2026-07-01', amount: 302.47, sourceId: 'old-bank', type: 'installment', legacyOrphan: true },
+            { id: 'legacy-amortization', date: '2026-07-01', amount: 1192.53, sourceId: 'old-bank', type: 'amortization', legacyOrphan: true }
+        ]
+    });
+
+    assert.equal(migrated.bankPayments.length, 0);
+    assert.equal(migrated.historicalInterestAllocations.length, 2);
+    assert.equal(FinanceEngine.sumCents(migrated.historicalInterestAllocations, item => item.amount), 149500);
+    assert.equal(migrated.historicalInterestAllocations[0].sourceId, bankSource.id);
+    assert.equal(FinanceEngine.findIntegrityIssues(migrated).length, 0);
+});
+
+test('cria backup JSON canônico sem usar documento externo para confirmar parcelas', () => {
+    const backup = FinanceEngine.createBackup({
+        capitalSources: [ownSource, bankSource],
+        clients: [],
+        fundsTransactions: [],
+        bankPayments: [{
+            id: 'pending-2',
+            date: '2026-08-03',
+            amount: 302.47,
+            sourceId: bankSource.id,
+            type: 'installment',
+            installmentNumber: 2,
+            status: FinanceEngine.BANK_PAYMENT_STATUS.WITHHELD_PENDING_BANK,
+            withheldDate: '2026-08-03'
+        }]
+    });
+
+    assert.equal(backup.exportType, FinanceEngine.EXPORT_TYPE);
+    assert.equal(backup.schemaVersion, 2);
+    assert.match(backup.exportedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(backup.bankPayments[0].status, FinanceEngine.BANK_PAYMENT_STATUS.WITHHELD_PENDING_BANK);
+    assert.equal(backup.bankPayments[0].confirmationDate, undefined);
+    assert.equal(FinanceEngine.validateBackup(backup).valid, true);
+
+    const confirmed = FinanceEngine.createBackup({
+        capitalSources: [ownSource, bankSource],
+        clients: [],
+        fundsTransactions: [],
+        bankPayments: [{
+            id: 'confirmed-2',
+            date: '2026-08-03',
+            amount: 302.47,
+            sourceId: bankSource.id,
+            type: 'installment',
+            installmentNumber: 2,
+            status: FinanceEngine.BANK_PAYMENT_STATUS.CONFIRMED,
+            confirmationDate: '2026-08-06'
+        }]
+    });
+    assert.equal(confirmed.bankPayments[0].confirmationSource, 'manual');
+});
+
 test('valida o backup antes da importação e resume o conteúdo preservado', () => {
     const valid = FinanceEngine.validateBackup({
         clients: [{ id: 'client-1', name: 'Cliente', loans: [{ id: 'loan-1', amount: 100, payments: [] }] }],

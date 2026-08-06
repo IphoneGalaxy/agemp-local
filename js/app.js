@@ -65,25 +65,24 @@
 
             // --- SISTEMA DE BACKUP ---
             const handleExportBackup = () => {
-                const data = {
-                    schemaVersion: FinanceEngine.SCHEMA_VERSION,
+                const data = FinanceEngine.createBackup({
                     fundsTransactions,
                     clients,
                     capitalSources,
                     bankPayments,
                     historicalInterestAllocations
-                };
+                });
                 const dataStr = JSON.stringify(data, null, 2);
-                const blob = new Blob([dataStr], { type: 'text/plain' });
+                const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `backup_financas_${FinanceEngine.localIsoDate(new Date())}.txt`;
+                a.download = `backup_financas_${FinanceEngine.localIsoDate(new Date())}.json`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
-                showToast('✅ Backup salvo no celular!');
+                showToast('✅ Backup JSON completo salvo no celular!');
             };
 
             const handleImportBackup = (e) => {

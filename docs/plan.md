@@ -72,6 +72,8 @@ O trabalho começou pelo núcleo mais difícil, pois todas as telas e migraçõe
 - [x] Backup automático dos dados atuais antes da restauração
 - [x] Detecção não destrutiva de órfãos, possíveis duplicidades e divergências de origem
 - [x] Juros históricos de julho e agosto (R$ 2.990,00) classificados como recebidos e já utilizados, sem alerta de órfão/duplicidade
+- [x] Backup exportado como JSON canônico, com versão, origem e horário de exportação
+- [x] Confirmação de parcela nominal mantida como ação manual, sem leitura automática de demonstrativos em fontes
 - [x] Alerta visível no Painel, sem exclusão automática
 - [x] Origem com qualquer histórico vinculado não pode ser removida
 - [x] Capital Próprio principal não pode ser removido
