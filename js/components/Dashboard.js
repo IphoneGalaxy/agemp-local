@@ -11,6 +11,7 @@
                 const orphanIssues = integrityIssues.filter(issue => issue.type.includes('orphan'));
                 const duplicateIssues = integrityIssues.filter(issue => issue.type === 'possible-duplicate-bank-payment');
                 const mismatchIssues = integrityIssues.filter(issue => issue.type === 'bank-funding-mismatch');
+                const today = FinanceEngine.localIsoDate(new Date());
 
                 useEffect(() => {
                     if (capitalSources.some(source => source.id === selectedSourceId)) return;
@@ -75,10 +76,26 @@
                                 {/* Cada Banco */}
                                 {capitalSources.filter(s => s.type === 'bank').map(bank => {
                                     const contract = FinanceEngine.summarizeBankContract({ bank, bankPayments });
+                                    const schedule = FinanceEngine.buildInstallmentSchedule({ bank, bankPayments });
                                     const bankSourceSummary = getSourceSummary(bank.id);
                                     const bd = globalStats.bankDetails?.find(b => b.sourceId === bank.id);
                                     const juros = bd ? bd.interestFromClients : 0;
                                     const recovery = bd?.recovery;
+                                    const pendingInstallments = schedule.filter(item => (
+                                        ['open', 'scheduled', 'pending_bank'].includes(item.status)
+                                    ));
+                                    const nextInstallments = pendingInstallments.slice(0, 2);
+                                    const overdueInstallments = pendingInstallments.filter(item => (
+                                        item.dueDate && item.dueDate < today && item.status !== 'pending_bank'
+                                    ));
+                                    const awaitingBankConfirmation = pendingInstallments.filter(item => item.status === 'pending_bank');
+                                    const recoveryStatus = !recovery
+                                        ? null
+                                        : recovery.isCashPositive
+                                            ? { label: 'Lucro de caixa', icon: '✅', detail: `Resultado positivo de ${formatMoney(recovery.cashProfit)}.` }
+                                            : recovery.currentNetCash === 0
+                                                ? { label: 'Em equilíbrio', icon: '⚖️', detail: 'Entradas e saídas da operação estão empatadas.' }
+                                                : { label: 'Recuperando capital', icon: '⏳', detail: `Faltam ${formatMoney(recovery.ownCapitalStillToRecover)} para cobrir as saídas.` };
                                     return (
                                         <div key={bank.id} data-testid="dash-card-banco" className="bg-purple-600 text-white rounded-2xl p-5 shadow-lg">
                                             <p className="text-purple-100 text-sm font-medium">🏦 {bank.name}</p>
@@ -109,6 +126,9 @@
                                             {recovery && (
                                                 <div data-testid={`bank-recovery-${bank.id}`} className="mt-3 rounded-xl bg-white/15 p-3 text-left">
                                                     <p className="text-[10px] font-black uppercase tracking-wide text-purple-100">Recuperação da operação</p>
+                                                    <div className="mt-2 rounded-lg bg-black/10 px-2 py-1.5 text-[10px] font-bold text-white">
+                                                        {recoveryStatus.icon} {recoveryStatus.label} · {recoveryStatus.detail}
+                                                    </div>
                                                     <div className="grid grid-cols-2 gap-2 mt-2 text-center">
                                                         <div>
                                                             <p className="text-[9px] text-purple-200">Resultado de caixa</p>
@@ -129,8 +149,30 @@
                                                     {!recovery.isCashPositive && recovery.ownCapitalStillToRecover > 0 && (
                                                         <p className="text-[9px] text-purple-200 mt-1">Falta recuperar: {formatMoney(recovery.ownCapitalStillToRecover)}</p>
                                                     )}
+                                                    {recovery.projectedMonthlyInterest > 0 && recovery.outstandingClientPrincipal > 0 && (
+                                                        <p className="text-[9px] text-purple-200 mt-1">Projeção considera {formatMoney(recovery.projectedMonthlyInterest)}/mês em juros enquanto houver principal em aberto.</p>
+                                                    )}
                                                 </div>
                                             )}
+                                            <div data-testid={`bank-next-installments-${bank.id}`} className="mt-3 rounded-xl bg-white/15 p-3 text-left">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <p className="text-[10px] font-black uppercase tracking-wide text-purple-100">Próximos vencimentos</p>
+                                                    {overdueInstallments.length > 0 && <span className="rounded bg-red-500/80 px-1.5 py-0.5 text-[8px] font-black">{overdueInstallments.length} em atraso</span>}
+                                                    {overdueInstallments.length === 0 && awaitingBankConfirmation.length > 0 && <span className="rounded bg-amber-400/90 px-1.5 py-0.5 text-[8px] font-black text-amber-950">{awaitingBankConfirmation.length} em folha</span>}
+                                                </div>
+                                                {nextInstallments.length > 0 ? (
+                                                    <div className="mt-2 space-y-1.5">
+                                                        {nextInstallments.map(item => {
+                                                            const label = item.status === 'pending_bank' ? 'Em folha' : item.status === 'scheduled' ? 'Agendada' : item.dueDate && item.dueDate < today ? 'Em atraso' : 'Em aberto';
+                                                            return <div key={item.number} className="flex justify-between gap-2 text-[10px] text-purple-100"><span>#{item.number} · {item.dueDate ? formatDate(item.dueDate) : 'data a confirmar'} · {label}</span><b className="text-white">{formatMoney(item.amount)}</b></div>;
+                                                        })}
+                                                    </div>
+                                                ) : (
+                                                    <p className="mt-2 text-[10px] text-purple-100">Nenhuma parcela pendente no controle pessoal.</p>
+                                                )}
+                                                {overdueInstallments.length > 0 && <p className="mt-2 text-[9px] font-bold text-red-100">Confira o banco antes de considerar a parcela paga.</p>}
+                                                {overdueInstallments.length === 0 && awaitingBankConfirmation.length > 0 && <p className="mt-2 text-[9px] text-amber-100">Aguarda confirmação manual do repasse pelo banco.</p>}
+                                            </div>
                                         </div>
                                     );
                                 })}
