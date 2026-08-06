@@ -6,6 +6,7 @@
                 const today = FinanceEngine.localIsoDate(new Date());
                 const ownSources = capitalSources.filter(source => source.type === 'own');
                 const summary = FinanceEngine.summarizeBankContract({ bank, bankPayments });
+                const installmentSchedule = FinanceEngine.buildInstallmentSchedule({ bank, bankPayments });
                 const sourceSummary = getSourceSummary(bank.id);
                 const bankStats = globalStats.bankDetails.find(detail => detail.sourceId === bank.id);
 
@@ -163,7 +164,8 @@
                             type: 'installment',
                             status: installmentStatus,
                             installmentNumber: nextNormalNumber,
-                            dueDate: FinanceEngine.getInstallmentDueDate(bank.firstDueDate, nextNormalNumber),
+                            dueDate: FinanceEngine.buildInstallmentSchedule({ bank, bankPayments })
+                                .find(item => item.number === nextNormalNumber)?.dueDate || null,
                             ...(installmentStatus === FinanceEngine.BANK_PAYMENT_STATUS.WITHHELD_PENDING_BANK
                                 ? { withheldDate: operationDate }
                                 : { confirmationDate: operationDate, confirmationSource: 'manual' }),
@@ -383,6 +385,22 @@
                                 </div>
                             )}
                         </div>
+
+                        <details className="mb-4 border border-gray-100 rounded-xl p-3">
+                            <summary className="cursor-pointer text-xs font-bold text-gray-600">Parcelas do contrato ({installmentSchedule.length})</summary>
+                            <div className="mt-3 space-y-1.5 max-h-64 overflow-y-auto">
+                                {installmentSchedule.map(item => {
+                                    const labels = { open: 'Em aberto', pending_bank: 'Em folha', confirmed: 'Confirmada', anticipated: 'Antecipada', scheduled: 'Agendada' };
+                                    const colors = { open: 'bg-gray-100 text-gray-600', pending_bank: 'bg-amber-100 text-amber-700', confirmed: 'bg-green-100 text-green-700', anticipated: 'bg-blue-100 text-blue-700', scheduled: 'bg-violet-100 text-violet-700' };
+                                    return <div key={item.number} className="flex items-center justify-between gap-2 bg-gray-50 rounded-lg px-2 py-1.5 text-[10px]">
+                                        <span className="font-bold text-gray-700">#{item.number}</span>
+                                        <span className="text-gray-500">{item.dueDate ? formatDate(item.dueDate) : 'Data a confirmar'}</span>
+                                        <span className="font-bold text-gray-700">{formatMoney(item.amount)}</span>
+                                        <span className={`px-1.5 py-0.5 rounded font-bold ${colors[item.status]}`}>{labels[item.status]}</span>
+                                    </div>;
+                                })}
+                            </div>
+                        </details>
 
                         {pendingPayments.length > 0 && (
                             <div className="space-y-2 mb-4">

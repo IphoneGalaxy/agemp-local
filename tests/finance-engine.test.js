@@ -352,6 +352,23 @@ test('seleciona dinamicamente as últimas parcelas que ainda não foram resolvid
     assert.deepEqual(selected, FinanceEngine.rangeInclusive(32, 39));
 });
 
+test('monta tabela individual usando vencimentos reais e status financeiro', () => {
+    const bank = {
+        id: '99', totalInstallments: 3, installmentValue: 1831.75, firstDueDate: '2026-09-03',
+        installments: [
+            { number: 1, dueDate: '2026-09-03', amount: 1831.75 },
+            { number: 2, dueDate: '2026-10-05', amount: 1831.75 },
+            { number: 3, dueDate: '2026-11-03', amount: 1831.75 }
+        ]
+    };
+    const schedule = FinanceEngine.buildInstallmentSchedule({ bank, bankPayments: [
+        { sourceId: '99', type: 'installment', installmentNumber: 1, status: 'confirmed' },
+        { sourceId: '99', type: 'installment', installmentNumber: 2, status: 'withheld_pending_bank' }
+    ] });
+    assert.deepEqual(schedule.map(item => item.dueDate), ['2026-09-03', '2026-10-05', '2026-11-03']);
+    assert.deepEqual(schedule.map(item => item.status), ['confirmed', 'pending_bank', 'open']);
+});
+
 test('distribui uma operação mensal entre fundo bancário, complemento e sobra', () => {
     const higher = FinanceEngine.calculateMonthlyBankSettlement({
         reserveAvailable: 1495,

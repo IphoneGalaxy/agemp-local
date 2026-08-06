@@ -391,6 +391,29 @@
     const getBankInstallments = (bank) => Array.isArray(bank?.installments) ? bank.installments : [];
     const getBankInstallment = (bank, number) => getBankInstallments(bank).find(item => Number(item.number) === Number(number));
 
+    const buildInstallmentSchedule = ({ bank, bankPayments = [] }) => {
+        const summary = summarizeBankContract({ bank, bankPayments });
+        if (!summary) return [];
+        const anticipated = new Set(summary.anticipatedNumbers);
+        const confirmed = new Set(summary.confirmedNormalNumbers);
+        const pending = new Set(summary.pendingNormalNumbers);
+        const scheduled = new Set(summary.scheduledNormalNumbers);
+        return rangeInclusive(1, summary.totalInstallments).map(number => {
+            const installment = getBankInstallment(bank, number) || {};
+            let status = 'open';
+            if (anticipated.has(number)) status = 'anticipated';
+            else if (confirmed.has(number)) status = 'confirmed';
+            else if (pending.has(number)) status = 'pending_bank';
+            else if (scheduled.has(number)) status = 'scheduled';
+            return {
+                number,
+                dueDate: installment.dueDate || getInstallmentDueDate(bank.firstDueDate, number),
+                amount: fromCents(toCents(installment.amount === undefined ? bank.installmentValue : installment.amount)),
+                status
+            };
+        });
+    };
+
     const summarizeBankContract = ({ bank, bankPayments = [] }) => {
         if (!bank) return null;
         const totalInstallments = Number(bank.totalInstallments || 0);
@@ -1218,6 +1241,7 @@
         getPaymentInstallmentNumbers,
         getOfficialRemainingNumbers,
         getInstallmentDueDate,
+        buildInstallmentSchedule,
         summarizeBankContract,
         selectFinalInstallments,
         calculateMonthlyBankSettlement,
