@@ -4,16 +4,7 @@
 
 Aplicativo local para controlar capital próprio, capital bancário, empréstimos a clientes, recebimentos mensais e a quitação antecipada de contratos bancários. Os dados ficam no `localStorage` e podem ser exportados ou restaurados por arquivo.
 
-Implementação concluída na branch `fix/motor-financeiro-v2` e incorporada à `main` pelo PR #1.
-Versão publicada: GitHub Pages em `https://iphonegalaxy.github.io/agemp-local/`.
-
-### Estado atual em 04/08/2026
-
-- O site público responde normalmente e contém o motor financeiro V2.
-- A `main` publicada corresponde ao código revisado da branch de correção.
-- Os testes automatizados do motor passam (17 testes).
-- A validação estrutural do backup corrigido foi concluída.
-- O backup corrigido mantém os juros de Leal e Mello como histórico reconciliado, separado do extrato bancário.
+Branch de trabalho: `fix/motor-financeiro-v2`.
 
 ## Ordem de execução
 
@@ -71,7 +62,6 @@ O trabalho começou pelo núcleo mais difícil, pois todas as telas e migraçõe
 - [x] Resumo de clientes, empréstimos, origens e registros bancários antes da confirmação
 - [x] Backup automático dos dados atuais antes da restauração
 - [x] Detecção não destrutiva de órfãos, possíveis duplicidades e divergências de origem
-- [x] Juros históricos de julho e agosto (R$ 2.990,00) classificados como recebidos e já utilizados, sem alerta de órfão/duplicidade
 - [x] Alerta visível no Painel, sem exclusão automática
 - [x] Origem com qualquer histórico vinculado não pode ser removida
 - [x] Capital Próprio principal não pode ser removido
@@ -85,10 +75,8 @@ O trabalho começou pelo núcleo mais difícil, pois todas as telas e migraçõe
 - [x] Teste de interface do fechamento mensal, confirmação, estorno e proteção de origem
 - [x] Validação do backup original e do backup corrigido
 - [x] Revisão final do diff
-- [x] Publicação da branch remota e abertura do PR
-- [x] Revisão e incorporação do PR na `main`
-- [x] Publicação da versão atualizada no GitHub Pages
-- [ ] Importar o novo backup reconciliado no domínio publicado, sem substituir o backup original
+- [ ] Publicação em branch remota e abertura de PR
+- [ ] Homologação antes de alterar a versão publicada no GitHub Pages
 
 ## Regras financeiras
 
@@ -101,8 +89,6 @@ Para cada origem:
 3. soma os recebimentos dos clientes;
 4. subtrai apenas os pagamentos bancários realmente financiados por essa origem;
 5. em origem bancária, separa o principal recuperado da reserva de juros.
-
-Os juros de Leal (R$ 195/mês) e Mello (R$ 1.300/mês) totalizam R$ 1.495 por mês. Os R$ 2.990,00 de julho e agosto ficam registrados em `historicalInterestAllocations` como histórico já utilizado nas operações bancárias; não são saldo disponível e não são pagamentos bancários duplicados.
 
 ### Fechamento mensal bancário
 
@@ -157,4 +143,4 @@ node --test tests/finance-engine.test.js
 python -m http.server 8080
 ```
 
-O site continua estático e compatível com GitHub Pages. O `localStorage` pertence ao domínio publicado. Portanto, a publicação do código já foi concluída, mas a homologação dos dados reais deve ser feita importando o backup corrigido no site e conferindo os indicadores antes de considerar o histórico definitivamente aprovado.
+O site continua estático e compatível com GitHub Pages. O `localStorage` pertence ao domínio publicado; por isso a versão em produção só deve ser alterada depois da homologação do backup corrigido.
