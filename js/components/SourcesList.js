@@ -9,7 +9,9 @@
                 const [bankReceived, setBankReceived] = useState('');
                 const [bankFinanced, setBankFinanced] = useState('');
                 const [bankRate, setBankRate] = useState('');
+                const [bankAnnualRate, setBankAnnualRate] = useState('');
                 const [bankCet, setBankCet] = useState('');
+                const [bankCetAnnual, setBankCetAnnual] = useState('');
                 const [bankInstallments, setBankInstallments] = useState('');
                 const [bankInstallmentValue, setBankInstallmentValue] = useState('');
                 const [bankFees, setBankFees] = useState('');
@@ -21,7 +23,8 @@
                 const documentInputRef = useRef(null);
 
                 const resetBankFields = () => {
-                    setBankReceived(''); setBankFinanced(''); setBankRate(''); setBankCet('');
+                    setBankReceived(''); setBankFinanced(''); setBankRate(''); setBankAnnualRate('');
+                    setBankCet(''); setBankCetAnnual('');
                     setBankInstallments(''); setBankInstallmentValue(''); setBankFees('');
                     setBankStartDate(FinanceEngine.localIsoDate(new Date())); setBankFirstDueDate('');
                     setBankSchedule([]); setImportDraft(null);
@@ -31,7 +34,8 @@
                     const source = draft.source;
                     setSourceType('bank'); setSourceName(source.name || '');
                     setBankReceived(String(source.receivedAmount || '')); setBankFinanced(String(source.financedAmount || ''));
-                    setBankRate(String(source.monthlyRate || '')); setBankCet(String(source.cetMonthly || ''));
+                    setBankRate(String(source.monthlyRate || '')); setBankAnnualRate(String(source.contractRateAnnual || ''));
+                    setBankCet(String(source.cetMonthly || '')); setBankCetAnnual(String(source.cetAnnual || ''));
                     setBankInstallments(String(source.totalInstallments || '')); setBankInstallmentValue(String(source.installmentValue || ''));
                     setBankFees(String(source.iofAmount || '')); setBankStartDate(source.startDate || FinanceEngine.localIsoDate(new Date()));
                     setBankFirstDueDate(source.firstDueDate || ''); setBankSchedule(source.installments || []);
@@ -80,7 +84,9 @@
                             financedAmount: Number(bankFinanced) || received,
                             monthlyRate: Number(bankRate) || 0,
                             contractRateMonthly: Number(bankRate) || 0,
+                            contractRateAnnual: Number(bankAnnualRate) || 0,
                             cetMonthly: Number(bankCet) || 0,
+                            cetAnnual: Number(bankCetAnnual) || 0,
                             totalInstallments: installments, installmentValue: installmentVal,
                             totalToPay: installmentVal * installments,
                             additionalFees: Number(bankFees) || 0,
@@ -92,7 +98,11 @@
                             officialBalanceSnapshots: [],
                             contractNumber: importDraft?.source?.contractNumber || '',
                             installments: bankSchedule.map(item => ({ ...item })),
-                            importMetadata: importDraft?.source?.importMetadata || undefined
+                            importMetadata: importDraft?.source?.importMetadata ? {
+                                ...importDraft.source.importMetadata,
+                                importMode: 'confirmed',
+                                confirmedAt: new Date().toISOString()
+                            } : undefined
                         }, ...capitalSources]);
                     } else {
                         setCapitalSources([{ id: generateId(), type: 'own', name: sourceName.trim() }, ...capitalSources]);
@@ -130,7 +140,11 @@
                                         </div>
                                         <div className="grid grid-cols-2 gap-3">
                                             <div><label className="text-[10px] text-gray-500 font-bold block mb-1">Taxa do Contrato (% a.m.)</label><input type="number" step="0.0001" className="w-full p-2.5 border rounded-xl bg-gray-50 text-sm" placeholder="1,5268" value={bankRate} onChange={(e) => setBankRate(e.target.value)} /></div>
-                                            <div><label className="text-[10px] text-gray-500 font-bold block mb-1">CET (% a.m.)</label><input type="number" step="0.01" className="w-full p-2.5 border rounded-xl bg-gray-50 text-sm" placeholder="1,67" value={bankCet} onChange={(e) => setBankCet(e.target.value)} /></div>
+                                            <div><label className="text-[10px] text-gray-500 font-bold block mb-1">CET (% a.m.)</label><input type="number" step="0.0001" className="w-full p-2.5 border rounded-xl bg-gray-50 text-sm" placeholder="1,67" value={bankCet} onChange={(e) => setBankCet(e.target.value)} /></div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div><label className="text-[10px] text-gray-500 font-bold block mb-1">Taxa do Contrato (% a.a.)</label><input type="number" step="0.0001" className="w-full p-2.5 border rounded-xl bg-gray-50 text-sm" placeholder="19,9419" value={bankAnnualRate} onChange={(e) => setBankAnnualRate(e.target.value)} /></div>
+                                            <div><label className="text-[10px] text-gray-500 font-bold block mb-1">CET (% a.a.)</label><input type="number" step="0.0001" className="w-full p-2.5 border rounded-xl bg-gray-50 text-sm" placeholder="21,92" value={bankCetAnnual} onChange={(e) => setBankCetAnnual(e.target.value)} /></div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-3">
                                             <div><label className="text-[10px] text-gray-500 font-bold block mb-1">Nº Parcelas</label><input type="number" required className="w-full p-2.5 border rounded-xl bg-gray-50 text-sm" placeholder="61" value={bankInstallments} onChange={(e) => setBankInstallments(e.target.value)} /></div>
