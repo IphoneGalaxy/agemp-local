@@ -74,6 +74,10 @@
 
     const parseSantander = (text) => {
         const normalized = normalizeText(text);
+        const rateSection = capture(normalized, /(Custo\s+Efet(?:ivo)?\.?\s+Total[\s\S]*?)(?:Movimenta[cç][oõ]es\s+Efetuadas|$)/i);
+        const monthlyRates = [...rateSection.matchAll(/([\d.,]+)\s*%\s*a\.m\.?/gi)].map(match => money(match[1]));
+        const contractMonthlyRate = money(capture(normalized, /Tx\.\s*Efet\.\s*do contrato\s*:\s*([\d.,]+)\s*%\s*a\.m\.?/i)) || monthlyRates[1] || 0;
+        const cetMonthlyRate = money(capture(normalized, /Custo\s+Efet(?:ivo)?\.?\s+Total\s*(?:\(?CET\)?)?\s*:\s*([\d.,]+)\s*%\s*a\.m\.?/i)) || monthlyRates[0] || 0;
         const total = Number(capture(normalized, /Nr\.\s*Parcelas\s*:\s*(\d+)/i));
         const scheduleRows = [...String(text || '').matchAll(/^\s*(\d+)\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}\/\d{2}\/\d{4})?\s+([\d.]+,\d{2})/gm)]
             .map(match => ({ number: Number(match[1]), dueDate: isoDate(match[2]), amount: money(match[3]) }));
@@ -93,8 +97,8 @@
             receivedAmount: money(capture(normalized, /Valor Solicitado\s*:\s*([\d.]+,\d{2})/i)),
             financedAmount: money(capture(normalized, /Vlr\.\s*Financiado\s*:\s*([\d.]+,\d{2})/i)),
             iofAmount: money(capture(normalized, /IOF\s*:\s*([\d.]+,\d{2})/i)),
-            monthlyRate: money(capture(normalized, /Tx\.\s*Efet\.\s*do contrato:[\s\S]{0,180}?\d+[,.]\d+\s*%\s*a\.a\.\s+([\d,]+)\s*%\s*a\.m/i)),
-            cetMonthly: money(capture(normalized, /Valor Presente\):\s*([\d,]+)\s*%\s*a\.m/i)),
+            monthlyRate: contractMonthlyRate,
+            cetMonthly: cetMonthlyRate,
             startDate: isoDate(capture(normalized, /Dt\.\s*Formaliza[cç][aã]o\s*:\s*(\d{2}\/\d{2}\/\d{4})/i)),
             installments,
             warnings: ['O demonstrativo pode conter parcelas já liquidadas. Nenhum pagamento será importado ou confirmado automaticamente.']
