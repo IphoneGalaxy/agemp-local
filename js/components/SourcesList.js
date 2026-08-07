@@ -73,11 +73,26 @@
                         const installments = Number(bankInstallments);
                         const installmentVal = Number(bankInstallmentValue);
                         if (!received || !installments || !installmentVal) return;
-                        const duplicate = importDraft?.source?.contractNumber && capitalSources.some(source => (
+                        const confirmedImportMetadata = importDraft?.source?.importMetadata ? {
+                            ...importDraft.source.importMetadata,
+                            importMode: 'confirmed',
+                            confirmedAt: new Date().toISOString()
+                        } : undefined;
+                        const duplicateSource = importDraft?.source?.contractNumber && capitalSources.find(source => (
                             source.type === 'bank' && source.contractNumber === importDraft.source.contractNumber &&
                             source.importMetadata?.provider === importDraft.provider
                         ));
-                        if (duplicate) { showToast('❌ Este contrato já está cadastrado.'); return; }
+                        if (duplicateSource) {
+                            setCapitalSources(capitalSources.map(source => source.id === duplicateSource.id ? {
+                                ...source,
+                                contractRateAnnual: Number(bankAnnualRate) || source.contractRateAnnual || 0,
+                                cetAnnual: Number(bankCetAnnual) || source.cetAnnual || 0,
+                                importMetadata: confirmedImportMetadata
+                            } : source));
+                            setSourceName(''); setSourceType('own'); resetBankFields(); setShowForm(false);
+                            showToast('✅ Dados técnicos do contrato existente atualizados!');
+                            return;
+                        }
                         setCapitalSources([{
                             id: generateId(), type: 'bank', name: sourceName.trim(),
                             receivedAmount: received,
@@ -98,11 +113,7 @@
                             officialBalanceSnapshots: [],
                             contractNumber: importDraft?.source?.contractNumber || '',
                             installments: bankSchedule.map(item => ({ ...item })),
-                            importMetadata: importDraft?.source?.importMetadata ? {
-                                ...importDraft.source.importMetadata,
-                                importMode: 'confirmed',
-                                confirmedAt: new Date().toISOString()
-                            } : undefined
+                            importMetadata: confirmedImportMetadata
                         }, ...capitalSources]);
                     } else {
                         setCapitalSources([{ id: generateId(), type: 'own', name: sourceName.trim() }, ...capitalSources]);
