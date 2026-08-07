@@ -922,6 +922,12 @@
                 const installmentValue = fromCents(toCents(source.installmentValue));
                 const totalInstallments = Number(source.totalInstallments || 0);
                 const calculatedTotal = fromCents(toCents(installmentValue) * totalInstallments);
+                const importMetadata = source.importMetadata ? {
+                    ...source.importMetadata,
+                    importMode: source.importMetadata.importMode === 'draft_review_required'
+                        ? 'confirmed'
+                        : source.importMetadata.importMode
+                } : undefined;
 
                 return {
                     ...source,
@@ -940,7 +946,12 @@
                     contractRateMonthly: source.contractRateMonthly === undefined
                         ? undefined
                         : Number(source.contractRateMonthly),
+                    contractRateAnnual: source.contractRateAnnual === undefined
+                        ? undefined
+                        : Number(source.contractRateAnnual),
                     cetMonthly: source.cetMonthly === undefined ? undefined : Number(source.cetMonthly),
+                    cetAnnual: source.cetAnnual === undefined ? undefined : Number(source.cetAnnual),
+                    importMetadata,
                     totalPaidToBank: fromCents(toCents(source.totalPaidToBank)),
                     monthlyReserve: fromCents(toCents(source.monthlyReserve)),
                     amortizationFund: fromCents(toCents(source.amortizationFund)),
