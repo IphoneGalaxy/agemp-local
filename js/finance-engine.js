@@ -21,6 +21,13 @@
         WITHHELD_PENDING_BANK: 'withheld_pending_bank',
         CONFIRMED: 'confirmed'
     });
+    const CLIENT_PAYMENT_KIND = Object.freeze({
+        AUTOMATIC: 'automatic',
+        INTEREST_ONLY: 'interest_only',
+        PRINCIPAL_AMORTIZATION: 'principal_amortization',
+        PRINCIPAL_SETTLEMENT: 'principal_settlement',
+        INTEREST_AND_PRINCIPAL_SETTLEMENT: 'interest_and_principal_settlement'
+    });
 
     const isMissingSourceId = (sourceId) => sourceId === undefined || sourceId === null || sourceId === '';
 
@@ -122,9 +129,12 @@
         const processedPayments = sortedPayments.map(payment => {
             const paymentCents = Math.max(0, toCents(payment.amount));
             const interestDueCents = calculateInterestCents(principalCents, loan?.interestRate);
-            const interestPaidCents = Math.min(paymentCents, interestDueCents);
-            const amountAfterInterestCents = Math.max(0, paymentCents - interestPaidCents);
-            const principalRecoveredCents = Math.min(principalCents, amountAfterInterestCents);
+            const mode = payment.kind || payment.paymentType || CLIENT_PAYMENT_KIND.AUTOMATIC;
+            const principalOnly = mode === CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT || mode === CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION;
+            const interestOnly = mode === CLIENT_PAYMENT_KIND.INTEREST_ONLY;
+            const interestPaidCents = principalOnly ? 0 : Math.min(paymentCents, interestDueCents);
+            const amountAfterInterestCents = interestOnly ? 0 : Math.max(0, paymentCents - interestPaidCents);
+            const principalRecoveredCents = Math.min(principalCents, principalOnly ? paymentCents : amountAfterInterestCents);
             const unallocatedCents = Math.max(0, amountAfterInterestCents - principalRecoveredCents);
 
             principalCents -= principalRecoveredCents;
@@ -134,6 +144,7 @@
 
             return {
                 ...payment,
+                kind: mode,
                 amount: fromCents(paymentCents),
                 interestPaid: fromCents(interestPaidCents),
                 amortized: fromCents(principalRecoveredCents),
@@ -377,6 +388,32 @@
         return addMonthsToIsoDate(firstDueDate, Number(installmentNumber) - 1);
     };
 
+    const getBankInstallments = (bank) => Array.isArray(bank?.installments) ? bank.installments : [];
+    const getBankInstallment = (bank, number) => getBankInstallments(bank).find(item => Number(item.number) === Number(number));
+
+    const buildInstallmentSchedule = ({ bank, bankPayments = [] }) => {
+        const summary = summarizeBankContract({ bank, bankPayments });
+        if (!summary) return [];
+        const anticipated = new Set(summary.anticipatedNumbers);
+        const confirmed = new Set(summary.confirmedNormalNumbers);
+        const pending = new Set(summary.pendingNormalNumbers);
+        const scheduled = new Set(summary.scheduledNormalNumbers);
+        return rangeInclusive(1, summary.totalInstallments).map(number => {
+            const installment = getBankInstallment(bank, number) || {};
+            let status = 'open';
+            if (anticipated.has(number)) status = 'anticipated';
+            else if (confirmed.has(number)) status = 'confirmed';
+            else if (pending.has(number)) status = 'pending_bank';
+            else if (scheduled.has(number)) status = 'scheduled';
+            return {
+                number,
+                dueDate: installment.dueDate || getInstallmentDueDate(bank.firstDueDate, number),
+                amount: fromCents(toCents(installment.amount === undefined ? bank.installmentValue : installment.amount)),
+                status
+            };
+        });
+    };
+
     const summarizeBankContract = ({ bank, bankPayments = [] }) => {
         if (!bank) return null;
         const totalInstallments = Number(bank.totalInstallments || 0);
@@ -489,9 +526,9 @@
             resolvedByBankCount: totalInstallments - bankRemainingNumbers.length,
             resolvedInPersonalControlCount: totalInstallments - accountingRemainingNumbers.length,
             nextInstallmentNumber,
-            nextInstallmentDueDate: getInstallmentDueDate(firstDueDate, nextInstallmentNumber),
+            nextInstallmentDueDate: getBankInstallment(bank, nextInstallmentNumber)?.dueDate || getInstallmentDueDate(firstDueDate, nextInstallmentNumber),
             lastInstallmentNumber,
-            forecastDate: getInstallmentDueDate(firstDueDate, lastInstallmentNumber),
+            forecastDate: getBankInstallment(bank, lastInstallmentNumber)?.dueDate || getInstallmentDueDate(firstDueDate, lastInstallmentNumber),
             totalCashPaid: fromCents(totalCashPaidCents),
             confirmedCashPaid: fromCents(confirmedCashPaidCents),
             amortizationCashPaid: fromCents(amortizationCashCents),
@@ -539,6 +576,125 @@
             ownCapitalRequired: fromCents(ownForInstallmentCents + ownForAmortizationCents),
             reserveCarryover: fromCents(reserveCarryoverCents),
             totalBankOutflow: fromCents(installmentCents + quoteCents)
+        };
+    };
+
+    const isoMonthKey = (date) => String(date || '').slice(0, 7);
+
+    const getInstallmentAmountCents = (bank, number) => {
+        const installment = getBankInstallment(bank, number);
+        return toCents(installment?.amount === undefined ? bank?.installmentValue : installment.amount);
+    };
+
+    // Measures the operation itself: money received from clients linked to this
+    // bank source less money paid to the bank. The client principal is deliberately
+    // kept separate because a positive cash result does not mean that principal
+    // is no longer at risk.
+    const calculateOperationRecovery = ({
+        bank,
+        clients = [],
+        bankPayments = [],
+        referenceDate,
+        projectionMonths = 120
+    }) => {
+        if (!bank?.id) return null;
+        const cutoff = referenceDate || localIsoDate(new Date());
+        const cutoffMonth = isoMonthKey(cutoff);
+        let clientReceiptsCents = 0;
+        let outstandingPrincipalCents = 0;
+        let projectedMonthlyInterestCents = 0;
+
+        clients.forEach(client => (client.loans || []).forEach(loan => {
+            if (loan.sourceId !== bank.id) return;
+            const result = calculateLoan(loan);
+            clientReceiptsCents += result.processedPayments.reduce((total, payment) => total + payment._cents.amount, 0);
+            outstandingPrincipalCents += result._cents.currentPrincipal;
+            if (result._cents.currentPrincipal > 0) {
+                projectedMonthlyInterestCents += calculateInterestCents(result._cents.currentPrincipal, loan.interestRate);
+            }
+        }));
+
+        const actualBankPaidCents = bankPayments
+            .filter(payment => payment.sourceId === bank.id && payment.status !== BANK_PAYMENT_STATUS.SCHEDULED)
+            .reduce((total, payment) => total + toCents(payment.amount), 0);
+        const currentNetCents = clientReceiptsCents - actualBankPaidCents;
+        const contract = summarizeBankContract({ bank, bankPayments });
+        const events = [];
+
+        // Include only installments still pending in the personal control. This
+        // avoids counting confirmed and anticipated installments a second time.
+        (contract?.accountingRemainingNumbers || []).forEach(number => {
+            const dueDate = getBankInstallment(bank, number)?.dueDate || getInstallmentDueDate(bank.firstDueDate, number);
+            if (dueDate && dueDate > cutoff) {
+                events.push({ date: dueDate, kind: 'bank', amountCents: getInstallmentAmountCents(bank, number) });
+            }
+        });
+
+        const currentParts = parseIsoDate(cutoff);
+        if (currentParts && projectedMonthlyInterestCents > 0) {
+            for (let index = 1; index <= Math.max(0, Number(projectionMonths || 0)); index += 1) {
+                const month = addMonths(currentParts, index);
+                const paymentDate = `${month.year}-${String(month.month + 1).padStart(2, '0')}-${String(Math.min(currentParts.day, new Date(month.year, month.month + 1, 0).getDate())).padStart(2, '0')}`;
+                events.push({ date: paymentDate, kind: 'client-interest', amountCents: projectedMonthlyInterestCents });
+            }
+        }
+
+        events.sort((left, right) => compareIsoDates(left.date, right.date) || (left.kind === 'bank' ? -1 : 1));
+        let runningCents = currentNetCents;
+        // A newly created operation starts at zero, but it has not recovered
+        // anything yet. It is considered at equilibrium only after at least
+        // one real cash movement has been recorded.
+        const hasActualCashFlow = clientReceiptsCents > 0 || actualBankPaidCents > 0;
+        let breakEvenDate = hasActualCashFlow && runningCents >= 0 ? cutoff : null;
+        const forecast = [];
+        events.forEach(event => {
+            if (breakEvenDate) return;
+            runningCents += event.kind === 'bank' ? -event.amountCents : event.amountCents;
+            forecast.push({ date: event.date, kind: event.kind, amount: fromCents(event.amountCents), netCash: fromCents(runningCents) });
+            if (runningCents >= 0) breakEvenDate = event.date;
+        });
+
+        return {
+            sourceId: bank.id,
+            asOfDate: cutoff,
+            clientReceipts: fromCents(clientReceiptsCents),
+            paidToBank: fromCents(actualBankPaidCents),
+            currentNetCash: fromCents(currentNetCents),
+            ownCapitalStillToRecover: fromCents(Math.max(0, -currentNetCents)),
+            cashProfit: fromCents(Math.max(0, currentNetCents)),
+            outstandingClientPrincipal: fromCents(outstandingPrincipalCents),
+            projectedMonthlyInterest: fromCents(projectedMonthlyInterestCents),
+            breakEvenDate,
+            isCashPositive: hasActualCashFlow && currentNetCents >= 0,
+            forecast
+        };
+    };
+
+    // Returns the explicit client-loan links for a bank operation.  This is
+    // intentionally based only on sourceId: legacy loans must never be
+    // attached to a bank just because their amount or client name looks alike.
+    const getBankOperationLinks = ({ bank, clients = [] }) => {
+        if (!bank?.id) return { sourceId: null, loans: [], clientCount: 0, outstandingPrincipal: 0, monthlyInterest: 0 };
+        const loans = [];
+        clients.forEach(client => (client.loans || []).forEach(loan => {
+            if (loan.sourceId !== bank.id) return;
+            const calculation = calculateLoan(loan);
+            loans.push({
+                clientId: client.id,
+                clientName: client.name || 'Cliente sem nome',
+                loanId: loan.id,
+                originalAmount: loan.amount,
+                outstandingPrincipal: calculation.currentPrincipal,
+                monthlyInterest: calculation.nextInterest,
+                isPaidOff: calculation.currentPrincipal <= 0
+            });
+        }));
+        return {
+            sourceId: bank.id,
+            loans,
+            clientCount: new Set(loans.map(loan => loan.clientId)).size,
+            outstandingPrincipal: fromCents(loans.reduce((total, loan) => total + toCents(loan.outstandingPrincipal), 0)),
+            monthlyInterest: fromCents(loans.filter(loan => !loan.isPaidOff).reduce((total, loan) => total + toCents(loan.monthlyInterest), 0))
         };
     };
 
@@ -715,7 +871,14 @@
                 remainingDebt: fromCents(remainingDebtCents),
                 officialBalanceDate: latestOfficial?.date || null,
                 reserveBalance: sourceSummary?.interestReserve || 0,
-                amortizationFund: sourceSummary?.interestReserve || 0
+                amortizationFund: sourceSummary?.interestReserve || 0,
+                recovery: calculateOperationRecovery({
+                    bank: source,
+                    clients,
+                    bankPayments,
+                    referenceDate
+                }),
+                operationLinks: getBankOperationLinks({ bank: source, clients })
             };
         });
 
@@ -781,6 +944,12 @@
                     totalPaidToBank: fromCents(toCents(source.totalPaidToBank)),
                     monthlyReserve: fromCents(toCents(source.monthlyReserve)),
                     amortizationFund: fromCents(toCents(source.amortizationFund)),
+                    installments: (source.installments || []).map(item => ({
+                        ...item,
+                        number: Number(item.number),
+                        amount: fromCents(toCents(item.amount)),
+                        dueDate: item.dueDate || null
+                    })),
                     officialBalanceSnapshots: (source.officialBalanceSnapshots || []).map(snapshot => ({
                         ...snapshot,
                         amount: fromCents(toCents(snapshot.amount))
@@ -832,7 +1001,11 @@
                     sourceId: isMissingSourceId(loan.sourceId) ? defaultOwnId : loan.sourceId,
                     payments: (loan.payments || []).map(payment => ({
                         ...payment,
-                        amount: fromCents(toCents(payment.amount))
+                        amount: fromCents(toCents(payment.amount)),
+                        // Mantém explícita a modalidade escolhida no lançamento.
+                        // Backups antigos sem esse campo continuam sendo tratados
+                        // pelo motor como pagamento comum (automatic).
+                        kind: payment.kind || payment.paymentType || undefined
                     }))
                 }))
             };
@@ -1090,6 +1263,7 @@
         EXPORT_TYPE,
         DEFAULT_OWN_SOURCE,
         BANK_PAYMENT_STATUS,
+        CLIENT_PAYMENT_KIND,
         toCents,
         fromCents,
         sumCents,
@@ -1106,9 +1280,12 @@
         getPaymentInstallmentNumbers,
         getOfficialRemainingNumbers,
         getInstallmentDueDate,
+        buildInstallmentSchedule,
         summarizeBankContract,
         selectFinalInstallments,
         calculateMonthlyBankSettlement,
+        calculateOperationRecovery,
+        getBankOperationLinks,
         calculateGlobalStats,
         migrateData,
         createBackup,

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const FinanceEngine = require('../js/finance-engine.js');
+const BankDocumentImporter = require('../js/bank-document-importer.js');
 
 const ownSource = { id: 'own-default', type: 'own', name: 'Capital Próprio' };
 const bankSource = {
@@ -116,6 +117,74 @@ test('representa valores monetários em centavos sem artefatos de ponto flutuant
     assert.equal(FinanceEngine.fromCents(1845067), 18450.67);
     assert.equal(FinanceEngine.toCents('85,18'), 8518);
     assert.equal(FinanceEngine.toCents('1.234,56'), 123456);
+});
+
+test('permite quitar somente o principal sem cobrar juros no mesmo lançamento', () => {
+    const result = FinanceEngine.calculateLoan({ amount: 5000, interestRate: 20, payments: [
+        { date: '2026-09-03', amount: 1000, kind: 'interest_only' },
+        { date: '2026-10-03', amount: 5000, kind: 'principal_settlement' }
+    ]});
+    assert.equal(result.totalInterestReceived, 1000);
+    assert.equal(result.totalPrincipalRecovered, 5000);
+    assert.equal(result.currentPrincipal, 0);
+});
+
+test('registra juros e quitação total no mesmo lançamento sem deixar saldo artificial', () => {
+    const result = FinanceEngine.calculateLoan({ amount: 5000, interestRate: 20, payments: [
+        { date: '2026-09-03', amount: 6000, kind: FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_AND_PRINCIPAL_SETTLEMENT }
+    ]});
+    assert.equal(result.totalInterestReceived, 1000);
+    assert.equal(result.totalPrincipalRecovered, 5000);
+    assert.equal(result.currentPrincipal, 0);
+});
+
+test('lista apenas vínculos explícitos de clientes para regularizar uma operação bancária', () => {
+    const links = FinanceEngine.getBankOperationLinks({ bank: bankSource, clients: bankLoanClients });
+    assert.equal(links.clientCount, 2);
+    assert.equal(links.outstandingPrincipal, 11500);
+    assert.equal(links.monthlyInterest, 1495);
+
+    const noLinks = FinanceEngine.getBankOperationLinks({ bank: { id: 'bank-99' }, clients: bankLoanClients });
+    assert.equal(noLinks.loans.length, 0);
+    assert.equal(noLinks.monthlyInterest, 0);
+});
+
+test('usa vencimentos individuais quando o contrato os informa', () => {
+    const summary = FinanceEngine.summarizeBankContract({ bank: {
+        id: '99', totalInstallments: 3, installmentValue: 1831.75, firstDueDate: '2026-09-03',
+        installments: [{ number: 1, dueDate: '2026-09-03' }, { number: 2, dueDate: '2026-10-05' }, { number: 3, dueDate: '2026-11-03' }]
+    }});
+    assert.equal(summary.forecastDate, '2026-11-03');
+});
+
+test('importa contrato 99Pay como rascunho com cronograma individual e sem pagamentos', () => {
+    const draft = BankDocumentImporter.parse(`CÉDULA DE CRÉDITO BANCÁRIO Nº. abc99
+        Valor Principal*: R$5.043,90 Valor Liberado: R$5.000,00 IOF: R$43,90
+        Juros Remuneratórios: Juros pré-fixados de 4,4900 % a.m.
+        Custo Efetivo Total (CET) Mensal: 5,0333%
+        1 03/09/2026 R$1.831,75 2 05/10/2026 R$1.831,75 3 03/11/2026 R$1.831,75
+        Data de Emissão desta CÉDULA: 06/08/2026`);
+    assert.equal(draft.provider, '99Pay');
+    assert.equal(draft.source.receivedAmount, 5000);
+    assert.equal(draft.source.financedAmount, 5043.9);
+    assert.deepEqual(draft.source.installments.map(item => item.dueDate), ['2026-09-03', '2026-10-05', '2026-11-03']);
+    assert.equal(draft.source.importMetadata.importMode, 'draft_review_required');
+});
+
+test('importa demonstrativo Santander sem converter movimentações em confirmações', () => {
+    const draft = BankDocumentImporter.parse(`Banco Santander (Brasil) S.A. Documento Descritivo de Crédito
+        Nr. Contrato: 796465673 Dt. Formalização: 01/06/2026
+        Valor Solicitado: 11.500,00 Vlr. Financiado: 11.854,41 IOF: 354,41
+        Dt. 1º Vcto: 05/07/2026 Nr. Parcelas: 61
+        1 05/07/2026 06/07/2026 302,47 297,32 5,15 Custo Efetivo Total CET: 1,67 % a.m.
+        Tx. Efet. do contrato: 1,5268 % a.m. Movimentações Efetuadas Liquidação`);
+    assert.equal(draft.provider, 'Santander');
+    assert.equal(draft.source.contractNumber, '796465673');
+    assert.equal(draft.source.totalInstallments, 61);
+    assert.equal(draft.source.installments.length, 61);
+    assert.equal(draft.source.firstDueDate, '2026-07-05');
+    assert.equal(draft.source.installmentValue, 302.47);
+    assert.match(draft.warnings[0], /Nenhum pagamento/);
 });
 
 test('migra dados antigos para a versão 2 e vincula registros sem origem ao Capital Próprio', () => {
@@ -325,6 +394,23 @@ test('seleciona dinamicamente as últimas parcelas que ainda não foram resolvid
     assert.deepEqual(selected, FinanceEngine.rangeInclusive(32, 39));
 });
 
+test('monta tabela individual usando vencimentos reais e status financeiro', () => {
+    const bank = {
+        id: '99', totalInstallments: 3, installmentValue: 1831.75, firstDueDate: '2026-09-03',
+        installments: [
+            { number: 1, dueDate: '2026-09-03', amount: 1831.75 },
+            { number: 2, dueDate: '2026-10-05', amount: 1831.75 },
+            { number: 3, dueDate: '2026-11-03', amount: 1831.75 }
+        ]
+    };
+    const schedule = FinanceEngine.buildInstallmentSchedule({ bank, bankPayments: [
+        { sourceId: '99', type: 'installment', installmentNumber: 1, status: 'confirmed' },
+        { sourceId: '99', type: 'installment', installmentNumber: 2, status: 'withheld_pending_bank' }
+    ] });
+    assert.deepEqual(schedule.map(item => item.dueDate), ['2026-09-03', '2026-10-05', '2026-11-03']);
+    assert.deepEqual(schedule.map(item => item.status), ['confirmed', 'pending_bank', 'open']);
+});
+
 test('distribui uma operação mensal entre fundo bancário, complemento e sobra', () => {
     const higher = FinanceEngine.calculateMonthlyBankSettlement({
         reserveAvailable: 1495,
@@ -347,6 +433,53 @@ test('distribui uma operação mensal entre fundo bancário, complemento e sobra
     assert.equal(lower.ownCapitalRequired, 0);
     assert.equal(lower.reserveCarryover, 83.26);
     assert.equal(lower.totalBankOutflow, 1411.74);
+});
+
+test('estima a recuperação de caixa sem esconder o principal ainda exposto', () => {
+    const pay99 = {
+        id: '99pay', type: 'bank', name: '99Pay', receivedAmount: 5000,
+        totalInstallments: 3, installmentValue: 1831.75, firstDueDate: '2026-09-03',
+        installments: [
+            { number: 1, dueDate: '2026-09-03', amount: 1831.75 },
+            { number: 2, dueDate: '2026-10-05', amount: 1831.75 },
+            { number: 3, dueDate: '2026-11-03', amount: 1831.75 }
+        ]
+    };
+    const mello = [{ id: 'mello', name: 'Mello', loans: [{
+        id: 'mello-99', date: '2026-08-06', amount: 5000, interestRate: 20, sourceId: '99pay', payments: []
+    }]}];
+
+    const before = FinanceEngine.calculateOperationRecovery({
+        bank: pay99, clients: mello, bankPayments: [], referenceDate: '2026-08-06'
+    });
+    assert.equal(before.breakEvenDate, '2027-02-06');
+    assert.equal(before.outstandingClientPrincipal, 5000);
+    assert.equal(before.projectedMonthlyInterest, 1000);
+    assert.equal(before.cashProfit, 0);
+
+    const after = FinanceEngine.calculateOperationRecovery({
+        bank: pay99,
+        clients: [{ ...mello[0], loans: [{ ...mello[0].loans[0], payments: [
+            { date: '2026-09-03', amount: 1000, kind: 'interest_only' },
+            { date: '2026-10-05', amount: 1000, kind: 'interest_only' },
+            { date: '2026-11-03', amount: 1000, kind: 'interest_only' },
+            { date: '2026-12-03', amount: 1000, kind: 'interest_only' },
+            { date: '2027-01-03', amount: 1000, kind: 'interest_only' },
+            { date: '2027-02-03', amount: 1000, kind: 'interest_only' }
+        ] }] }],
+        bankPayments: pay99.installments.map(item => ({
+            id: `p${item.number}`, sourceId: '99pay', date: item.dueDate, amount: item.amount,
+            type: 'installment', installmentNumber: item.number, status: 'confirmed'
+        })),
+        referenceDate: '2027-02-03'
+    });
+    assert.equal(after.clientReceipts, 6000);
+    assert.equal(after.paidToBank, 5495.25);
+    assert.equal(after.currentNetCash, 504.75);
+    assert.equal(after.cashProfit, 504.75);
+    assert.equal(after.ownCapitalStillToRecover, 0);
+    assert.equal(after.outstandingClientPrincipal, 5000);
+    assert.equal(after.breakEvenDate, '2027-02-03');
 });
 
 test('detecta pagamentos órfãos e possíveis duplicações sem apagar registros', () => {
@@ -439,6 +572,71 @@ test('cria backup JSON canônico sem usar documento externo para confirmar parce
         }]
     });
     assert.equal(confirmed.bankPayments[0].confirmationSource, 'manual');
+});
+
+test('backup e restauração preservam o cenário completo 99Pay → Mello sem confirmar parcelas', () => {
+    const original = {
+        capitalSources: [ownSource, {
+            id: 'bank-99pay',
+            type: 'bank',
+            name: '99Pay',
+            contractNumber: 'abc99',
+            receivedAmount: 5000,
+            financedAmount: 5043.9,
+            iofAmount: 43.9,
+            monthlyRate: 4.49,
+            cetMonthly: 5.0333,
+            totalInstallments: 3,
+            installmentValue: 1831.75,
+            totalToPay: 5495.25,
+            installments: [
+                { number: 1, dueDate: '2026-09-03', amount: 1831.75 },
+                { number: 2, dueDate: '2026-10-05', amount: 1831.75 },
+                { number: 3, dueDate: '2026-11-03', amount: 1831.75 }
+            ],
+            importMetadata: { provider: '99Pay', importMode: 'draft_review_required' }
+        }],
+        clients: [{ id: 'mello', name: 'Mello', loans: [{
+            id: 'mello-99', date: '2026-08-06', amount: 5000, interestRate: 20, sourceId: 'bank-99pay',
+            payments: [{ id: 'mello-sep', date: '2026-09-03', amount: 1000, kind: 'interest_only' }]
+        }]}],
+        fundsTransactions: [{ id: 'own-complement', date: '2026-09-03', amount: -831.75, sourceId: ownSource.id }],
+        bankPayments: [{
+            id: '99-first', date: '2026-09-03', amount: 1831.75, sourceId: 'bank-99pay', type: 'installment',
+            installmentNumber: 1, status: 'withheld_pending_bank',
+            fundingBreakdown: [{ sourceId: 'bank-99pay', amount: 1000 }, { sourceId: ownSource.id, amount: 831.75, fundsTransactionId: 'own-complement' }]
+        }]
+    };
+
+    const restored = FinanceEngine.migrateData(JSON.parse(JSON.stringify(FinanceEngine.createBackup(original))));
+    const bank = restored.capitalSources.find(source => source.id === 'bank-99pay');
+    const loan = restored.clients[0].loans[0];
+
+    assert.deepEqual(bank.installments.map(item => [item.number, item.dueDate, item.amount]), [[1, '2026-09-03', 1831.75], [2, '2026-10-05', 1831.75], [3, '2026-11-03', 1831.75]]);
+    assert.equal(bank.importMetadata.provider, '99Pay');
+    assert.equal(loan.sourceId, bank.id);
+    assert.equal(loan.payments[0].kind, FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY);
+    assert.equal(restored.bankPayments[0].status, FinanceEngine.BANK_PAYMENT_STATUS.WITHHELD_PENDING_BANK);
+    assert.equal(restored.bankPayments[0].confirmationDate, undefined);
+    assert.equal(FinanceEngine.calculateOperationRecovery({ bank, clients: restored.clients, bankPayments: restored.bankPayments, referenceDate: '2026-09-04' }).outstandingClientPrincipal, 5000);
+});
+
+test('backup preserva cronograma Santander e quitação exclusiva do principal', () => {
+    const backup = FinanceEngine.createBackup({
+        capitalSources: [ownSource, { ...bankSource, installments: [{ number: 1, dueDate: '2026-07-05', amount: 302.47 }, { number: 2, dueDate: '2026-08-05', amount: 302.47 }] }],
+        clients: [{ id: 'leal', name: 'Leal', loans: [{
+            id: 'leal-santander', date: '2026-06-01', amount: 5000, interestRate: 13, sourceId: bankSource.id,
+            payments: [{ id: 'interest', date: '2026-07-05', amount: 650, kind: 'interest_only' }, { id: 'settlement', date: '2026-08-05', amount: 5000, kind: 'principal_settlement' }]
+        }]}],
+        fundsTransactions: [], bankPayments: []
+    });
+    const restored = FinanceEngine.migrateData(JSON.parse(JSON.stringify(backup)));
+    const loan = restored.clients[0].loans[0];
+
+    assert.deepEqual(restored.capitalSources[1].installments.map(item => item.dueDate), ['2026-07-05', '2026-08-05']);
+    assert.equal(loan.payments[1].kind, FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT);
+    assert.equal(FinanceEngine.calculateLoan(loan).currentPrincipal, 0);
+    assert.equal(FinanceEngine.validateBackup(backup).valid, true);
 });
 
 test('valida o backup antes da importação e resume o conteúdo preservado', () => {

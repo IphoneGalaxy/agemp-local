@@ -17,12 +17,28 @@
                 const [payingLoanId, setPayingLoanId] = useState(null); 
                 const [paymentAmount, setPaymentAmount] = useState('');
                 const [paymentDate, setPaymentDate] = useState(FinanceEngine.localIsoDate(new Date()));
+                const [paymentKind, setPaymentKind] = useState(FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC);
 
                 const [confirmDeleteClient, setConfirmDeleteClient] = useState(false);
                 const [editingLoan, setEditingLoan] = useState(null); 
                 const [confirmDeleteLoanId, setConfirmDeleteLoanId] = useState(null);
                 const [editingPayment, setEditingPayment] = useState(null); 
                 const [confirmDeletePaymentId, setConfirmDeletePaymentId] = useState(null); 
+                const [pendingLoanSourceChange, setPendingLoanSourceChange] = useState(null);
+
+                const paymentKindLabel = (kind) => ({
+                    [FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY]: 'Somente juros',
+                    [FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION]: 'Amortização do principal',
+                    [FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT]: 'Quitação do principal',
+                    [FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_AND_PRINCIPAL_SETTLEMENT]: 'Juros + quitação total',
+                    [FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC]: 'Pagamento comum'
+                }[kind || FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC]);
+
+                const openPaymentForm = (loan) => {
+                    setPayingLoanId(loan.id);
+                    setPaymentKind(FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC);
+                    setPaymentAmount('');
+                };
 
                 const executeDeleteClient = () => {
                     setClients(clients.filter(c => c.id !== clientData.id));
@@ -63,16 +79,17 @@
                     showToast('🗑️ Contrato apagado.');
                 };
 
-                const handleSaveEditLoan = (e) => {
-                    e.preventDefault();
-                    const newAmount = Number(editingLoan.amount);
+                const applyLoanEdit = (loanEdit) => {
+                    const newAmount = Number(loanEdit.amount);
                     if (!newAmount || newAmount <= 0) return;
 
-                    const originalLoan = clientData.loans.find(l => l.id === editingLoan.id);
+                    const originalLoan = clientData.loans.find(l => l.id === loanEdit.id);
                     const diff = newAmount - originalLoan.amount; 
-                    if (diff > 0) {
-                        const sourceBalance = getCapitalBalance(originalLoan.sourceId || 'own-default');
-                        if (diff > sourceBalance) {
+                    const sourceChanged = loanEdit.sourceId !== originalLoan.sourceId;
+                    if (diff > 0 || sourceChanged) {
+                        const sourceBalance = getCapitalBalance(loanEdit.sourceId || 'own-default');
+                        const requiredBalance = sourceChanged ? newAmount : diff;
+                        if (requiredBalance > sourceBalance) {
                             showToast(`❌ Saldo insuficiente nesta origem (disp: ${formatMoney(sourceBalance)})`);
                             return;
                         }
@@ -82,14 +99,25 @@
                         if (c.id === clientData.id) {
                             return {
                                 ...c,
-                                loans: c.loans.map(l => l.id === editingLoan.id ? { ...l, date: editingLoan.date, amount: newAmount, interestRate: editingLoan.interestRate } : l)
+                                loans: c.loans.map(l => l.id === loanEdit.id ? { ...l, date: loanEdit.date, amount: newAmount, interestRate: loanEdit.interestRate, sourceId: loanEdit.sourceId } : l)
                             };
                         }
                         return c;
                     });
                     setClients(updatedClients);
                     setEditingLoan(null);
+                    setPendingLoanSourceChange(null);
                     showToast('✅ Contrato editado!');
+                };
+
+                const handleSaveEditLoan = (e) => {
+                    e.preventDefault();
+                    const originalLoan = clientData.loans.find(l => l.id === editingLoan.id);
+                    if (editingLoan.sourceId !== originalLoan.sourceId) {
+                        setPendingLoanSourceChange(editingLoan);
+                        return;
+                    }
+                    applyLoanEdit(editingLoan);
                 };
 
                 const handleAddPayment = (e) => {
@@ -99,7 +127,9 @@
                         if (c.id === clientData.id) {
                             return {
                                 ...c,
-                                loans: c.loans.map(l => l.id === payingLoanId ? { ...l, payments: [...l.payments, { id: generateId(), date: paymentDate, amount: Number(paymentAmount) }] } : l)
+                                loans: c.loans.map(l => l.id === payingLoanId ? { ...l, payments: [...l.payments, {
+                                    id: generateId(), date: paymentDate, amount: Number(paymentAmount), kind: paymentKind
+                                }] } : l)
                             };
                         }
                         return c;
@@ -107,6 +137,7 @@
                     setClients(updatedClients);
                     setPaymentAmount('');
                     setPayingLoanId(null);
+                    setPaymentKind(FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC);
                     showToast('✅ Pagamento registrado!');
                 };
 
@@ -136,7 +167,9 @@
                                 ...c,
                                 loans: c.loans.map(l => l.id === editingPayment.loanId ? {
                                     ...l,
-                                    payments: l.payments.map(p => p.id === editingPayment.id ? { ...p, date: editingPayment.date, amount: Number(editingPayment.amount) } : p)
+                                    payments: l.payments.map(p => p.id === editingPayment.id ? {
+                                        ...p, date: editingPayment.date, amount: Number(editingPayment.amount), kind: editingPayment.kind
+                                    } : p)
                                 } : l)
                             };
                         }
@@ -162,7 +195,7 @@
                         } else {
                             if (loan.processedPayments.length > 0) {
                                 loan.processedPayments.forEach(p => {
-                                    text += `   🟢 ${formatDate(p.date)}: Pagou ${formatMoney(p.amount)}\n`;
+                                    text += `   🟢 ${formatDate(p.date)}: ${paymentKindLabel(p.kind)} de ${formatMoney(p.amount)}\n`;
                                     text += `      (Juros: ${formatMoney(p.interestPaid)} | Abateu: ${formatMoney(p.amortized)})\n`;
                                 });
                             } else {
@@ -208,6 +241,22 @@
                                 </div>
                             </div>
                         )}
+
+                        {pendingLoanSourceChange && (() => {
+                            const previous = clientData.loans.find(loan => loan.id === pendingLoanSourceChange.id);
+                            const oldSource = capitalSources.find(source => source.id === previous?.sourceId);
+                            const newSource = capitalSources.find(source => source.id === pendingLoanSourceChange.sourceId);
+                            return (
+                                <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 text-center animate-fade-in shadow-sm">
+                                    <p className="text-amber-900 font-bold mb-1">Confirmar vínculo da operação?</p>
+                                    <p className="text-xs text-amber-800 mb-3">Este empréstimo passará de <b>{oldSource?.name || 'origem anterior'}</b> para <b>{newSource?.name || 'nova origem'}</b>. Os pagamentos existentes serão preservados, mas os indicadores de caixa e principal exposto serão recalculados.</p>
+                                    <div className="flex gap-2">
+                                        <button type="button" onClick={() => setPendingLoanSourceChange(null)} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-medium">Voltar</button>
+                                        <button type="button" onClick={() => applyLoanEdit(pendingLoanSourceChange)} className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-bold shadow-sm">Confirmar vínculo</button>
+                                    </div>
+                                </div>
+                            );
+                        })()}
 
                         <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 mb-6 text-center">
                             <p className="text-gray-500 text-sm font-medium mb-1">Dívida Principal (Todos contratos)</p>
@@ -316,6 +365,10 @@
                                                 <input type="number" step="0.01" required value={editingLoan.amount} onChange={e => setEditingLoan({...editingLoan, amount: e.target.value})} className="flex-1 p-2 border rounded-lg text-sm" />
                                                 <input type="number" step="0.1" required value={editingLoan.interestRate} onChange={e => setEditingLoan({...editingLoan, interestRate: Number(e.target.value)})} placeholder="Juros %" className="w-16 p-2 border rounded-lg text-sm" />
                                             </div>
+                                            <select value={editingLoan.sourceId || ''} onChange={e => setEditingLoan({...editingLoan, sourceId: e.target.value})} className="w-full mb-2 p-2 border rounded-lg bg-white text-sm text-gray-700">
+                                                {capitalSources.map(source => <option key={source.id} value={source.id}>{source.type === 'bank' ? '🏦' : '💰'} {source.name}</option>)}
+                                            </select>
+                                            <p className="text-[10px] text-gray-500 mb-2">A origem só muda após sua confirmação. Isso não registra nenhum pagamento nem baixa de parcela.</p>
                                             <div className="flex gap-2">
                                                 <button type="button" onClick={() => setEditingLoan(null)} className="flex-1 py-1.5 bg-gray-200 rounded-lg text-xs font-bold">Cancelar</button>
                                                 <button type="submit" className="flex-1 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold">Salvar</button>
@@ -352,7 +405,7 @@
                                             )}
 
                                             <div className="flex gap-2 text-gray-400 mt-6">
-                                                <button onClick={() => setEditingLoan({id: loan.id, date: loan.date, amount: loan.amount, interestRate: loan.interestRate ?? 10})} className="hover:text-blue-600"><IconEdit /></button>
+                                                <button onClick={() => setEditingLoan({id: loan.id, date: loan.date, amount: loan.amount, interestRate: loan.interestRate ?? 10, sourceId: loan.sourceId || FinanceEngine.getDefaultOwnSourceId(capitalSources)})} className="hover:text-blue-600"><IconEdit /></button>
                                                 <button onClick={() => setConfirmDeleteLoanId(loan.id)} className="hover:text-red-500"><IconDelete /></button>
                                             </div>
                                         </div>
@@ -368,7 +421,7 @@
                                                         <p className="text-xs text-gray-500">Saldo Devedor (Principal):</p>
                                                         <p className="text-xl font-bold text-red-600">{formatMoney(loan.currentPrincipal)}</p>
                                                     </div>
-                                                    <button onClick={() => setPayingLoanId(loan.id)} className="bg-green-100 text-green-700 px-4 py-2 rounded-xl text-sm font-bold shadow-sm border border-green-200">+ Pagar Este</button>
+                                                    <button onClick={() => openPaymentForm(loan)} className="bg-green-100 text-green-700 px-4 py-2 rounded-xl text-sm font-bold shadow-sm border border-green-200">+ Registrar recebimento</button>
                                                 </div>
                                                 
                                                 <div className="flex justify-between items-center bg-orange-50 px-3 py-2 rounded-lg border border-orange-100 mb-4">
@@ -379,6 +432,20 @@
                                                 {payingLoanId === loan.id && (
                                                     <form onSubmit={handleAddPayment} className="mb-4 bg-white shadow-md p-4 rounded-xl border border-gray-200 animate-fade-in relative z-10">
                                                         <p className="text-sm font-bold text-gray-800 mb-3">Novo Pagamento</p>
+                                                        <select value={paymentKind} onChange={e => setPaymentKind(e.target.value)} className="w-full mb-2 p-2 border rounded-lg bg-gray-50 text-sm">
+                                                            <option value={FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC}>Pagamento comum (juros primeiro)</option>
+                                                            <option value={FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY}>Somente juros — principal não diminui</option>
+                                                            <option value={FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION}>Amortização parcial do principal</option>
+                                                            <option value={FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT}>Quitação somente do principal</option>
+                                                            <option value={FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_AND_PRINCIPAL_SETTLEMENT}>Juros + quitação total</option>
+                                                        </select>
+                                                        <p className="text-[10px] text-gray-500 mb-3">
+                                                            {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY && 'Registra só os juros deste mês.'}
+                                                            {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION && 'Abate diretamente o valor emprestado, sem cobrar juros neste lançamento.'}
+                                                            {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT && 'Use quando o cliente devolver somente o principal em aberto.'}
+                                                            {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_AND_PRINCIPAL_SETTLEMENT && 'Use quando ele pagar os juros do mês e devolver todo o principal juntos.'}
+                                                            {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC && 'O valor cobre primeiro os juros e o restante abate o principal.'}
+                                                        </p>
                                                         <div className="flex gap-2 mb-3">
                                                             <input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} required className="w-1/3 p-2 border rounded-lg bg-gray-50 text-sm" />
                                                             <input type="number" step="0.01" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} placeholder="Valor (R$)" required className="flex-1 p-2 border rounded-lg bg-gray-50 text-sm" />
@@ -404,6 +471,13 @@
                                                                         <input type="date" required value={editingPayment.date} onChange={e => setEditingPayment({...editingPayment, date: e.target.value})} className="w-1/3 p-1 border rounded text-xs" />
                                                                         <input type="number" step="0.01" required value={editingPayment.amount} onChange={e => setEditingPayment({...editingPayment, amount: e.target.value})} className="flex-1 p-1 border rounded text-xs" />
                                                                     </div>
+                                                                    <select value={editingPayment.kind || FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC} onChange={e => setEditingPayment({...editingPayment, kind: e.target.value})} className="w-full mb-2 p-1 border rounded text-xs">
+                                                                        <option value={FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC}>Pagamento comum</option>
+                                                                        <option value={FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY}>Somente juros</option>
+                                                                        <option value={FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION}>Amortização do principal</option>
+                                                                        <option value={FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT}>Quitação do principal</option>
+                                                                        <option value={FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_AND_PRINCIPAL_SETTLEMENT}>Juros + quitação total</option>
+                                                                    </select>
                                                                     <div className="flex gap-2">
                                                                         <button type="button" onClick={() => setEditingPayment(null)} className="flex-1 bg-gray-200 rounded text-[10px] font-bold py-1">Cancelar</button>
                                                                         <button type="submit" className="flex-1 bg-blue-600 text-white rounded text-[10px] font-bold py-1">Salvar</button>
@@ -425,10 +499,10 @@
                                                                             <span className="font-bold text-sm text-gray-700">{formatMoney(p.amount)}</span>
                                                                             <span className="text-[10px] text-gray-400 ml-1">({formatDate(p.date)})</span>
                                                                         </div>
-                                                                        <p className="text-[10px] text-gray-500 ml-3 mt-0.5">Juros: {formatMoney(p.interestPaid)} | Abateu: {formatMoney(p.amortized)}</p>
+                                                                        <p className="text-[10px] text-gray-500 ml-3 mt-0.5">{paymentKindLabel(p.kind)} · Juros: {formatMoney(p.interestPaid)} | Abateu: {formatMoney(p.amortized)}</p>
                                                                     </div>
                                                                     <div className="flex gap-2 text-gray-400">
-                                                                        <button onClick={() => setEditingPayment({loanId: loan.id, id: p.id, date: p.date, amount: p.amount})} className="hover:text-blue-600 p-1"><IconEdit /></button>
+                                                                        <button onClick={() => setEditingPayment({loanId: loan.id, id: p.id, date: p.date, amount: p.amount, kind: p.kind || FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC})} className="hover:text-blue-600 p-1"><IconEdit /></button>
                                                                         <button onClick={() => setConfirmDeletePaymentId({loanId: loan.id, id: p.id})} className="hover:text-red-500 p-1"><IconDelete /></button>
                                                                     </div>
                                                                 </div>

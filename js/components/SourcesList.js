@@ -15,6 +15,50 @@
                 const [bankFees, setBankFees] = useState('');
                 const [bankStartDate, setBankStartDate] = useState(FinanceEngine.localIsoDate(new Date()));
                 const [bankFirstDueDate, setBankFirstDueDate] = useState('');
+                const [bankSchedule, setBankSchedule] = useState([]);
+                const [importDraft, setImportDraft] = useState(null);
+                const [importing, setImporting] = useState(false);
+                const documentInputRef = useRef(null);
+
+                const resetBankFields = () => {
+                    setBankReceived(''); setBankFinanced(''); setBankRate(''); setBankCet('');
+                    setBankInstallments(''); setBankInstallmentValue(''); setBankFees('');
+                    setBankStartDate(FinanceEngine.localIsoDate(new Date())); setBankFirstDueDate('');
+                    setBankSchedule([]); setImportDraft(null);
+                };
+
+                const applyImportDraft = (draft) => {
+                    const source = draft.source;
+                    setSourceType('bank'); setSourceName(source.name || '');
+                    setBankReceived(String(source.receivedAmount || '')); setBankFinanced(String(source.financedAmount || ''));
+                    setBankRate(String(source.monthlyRate || '')); setBankCet(String(source.cetMonthly || ''));
+                    setBankInstallments(String(source.totalInstallments || '')); setBankInstallmentValue(String(source.installmentValue || ''));
+                    setBankFees(String(source.iofAmount || '')); setBankStartDate(source.startDate || FinanceEngine.localIsoDate(new Date()));
+                    setBankFirstDueDate(source.firstDueDate || ''); setBankSchedule(source.installments || []);
+                    setImportDraft(draft); setShowForm(true);
+                };
+
+                const handleImportDocument = async (event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (!file) return;
+                    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+                        showToast('❌ Selecione um arquivo PDF.'); return;
+                    }
+                    setImporting(true);
+                    try {
+                        const text = await BankDocumentImporter.extractPdfText(file);
+                        const draft = BankDocumentImporter.parse(text);
+                        if (!draft) {
+                            showToast('⚠️ Não reconheci este padrão. Cadastre manualmente e guarde o PDF para consulta.');
+                            return;
+                        }
+                        applyImportDraft(draft);
+                        showToast(`📄 Dados de ${draft.provider} preenchidos para conferência.`);
+                    } catch (error) {
+                        showToast(`❌ Não foi possível ler o PDF: ${error.message || 'arquivo inválido.'}`);
+                    } finally { setImporting(false); }
+                };
 
                 const handleAddSource = (e) => {
                     e.preventDefault();
@@ -25,6 +69,11 @@
                         const installments = Number(bankInstallments);
                         const installmentVal = Number(bankInstallmentValue);
                         if (!received || !installments || !installmentVal) return;
+                        const duplicate = importDraft?.source?.contractNumber && capitalSources.some(source => (
+                            source.type === 'bank' && source.contractNumber === importDraft.source.contractNumber &&
+                            source.importMetadata?.provider === importDraft.provider
+                        ));
+                        if (duplicate) { showToast('❌ Este contrato já está cadastrado.'); return; }
                         setCapitalSources([{
                             id: generateId(), type: 'bank', name: sourceName.trim(),
                             receivedAmount: received,
@@ -40,27 +89,33 @@
                             firstDueDate: bankFirstDueDate || bankStartDate,
                             status: 'active', totalPaidToBank: 0, paidInstallments: 0,
                             monthlyReserve: 0, amortizationFund: 0,
-                            officialBalanceSnapshots: []
+                            officialBalanceSnapshots: [],
+                            contractNumber: importDraft?.source?.contractNumber || '',
+                            installments: bankSchedule.map(item => ({ ...item })),
+                            importMetadata: importDraft?.source?.importMetadata || undefined
                         }, ...capitalSources]);
                     } else {
                         setCapitalSources([{ id: generateId(), type: 'own', name: sourceName.trim() }, ...capitalSources]);
                     }
-                    setSourceName(''); setSourceType('own'); setBankReceived(''); setBankFinanced(''); setBankRate(''); setBankCet('');
-                    setBankInstallments(''); setBankInstallmentValue(''); setBankFees('');
-                    setBankStartDate(FinanceEngine.localIsoDate(new Date())); setBankFirstDueDate(''); setShowForm(false);
+                    setSourceName(''); setSourceType('own'); resetBankFields(); setShowForm(false);
                     showToast(sourceType === 'bank' ? '🏦 Origem bancária criada!' : '💰 Origem própria criada!');
                 };
 
                 return (
                     <div className="p-4 space-y-6 pb-20">
                         {!showForm ? (
-                            <button data-testid="origens-btn-nova" onClick={() => setShowForm(true)} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md">+ Nova Origem</button>
+                            <div className="grid grid-cols-2 gap-3">
+                                <button data-testid="origens-btn-nova" onClick={() => setShowForm(true)} className="bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md">+ Nova Origem</button>
+                                <button data-testid="origens-btn-importar-pdf" onClick={() => documentInputRef.current?.click()} disabled={importing} className="bg-purple-600 disabled:bg-purple-300 text-white py-3 rounded-xl font-bold shadow-md">{importing ? 'Lendo PDF…' : '📄 Importar PDF'}</button>
+                                <input ref={documentInputRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={handleImportDocument} />
+                            </div>
                         ) : (
                             <form onSubmit={handleAddSource} className="bg-white rounded-2xl p-5 shadow-md border border-gray-200 animate-fade-in">
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="font-bold text-gray-800 text-lg">Nova Origem de Capital</h3>
-                                    <button type="button" onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-600 text-sm font-bold">✕</button>
+                                    <button type="button" onClick={() => { setShowForm(false); resetBankFields(); }} className="text-gray-400 hover:text-gray-600 text-sm font-bold">✕</button>
                                 </div>
+                                {importDraft && <div className="mb-4 p-3 rounded-xl bg-purple-50 border border-purple-200 text-xs text-purple-800"><p className="font-bold">📄 Rascunho importado de {importDraft.provider}</p><p className="mt-1">Confira e ajuste os campos abaixo. Nenhuma parcela, pagamento ou saldo foi confirmado pelo PDF.</p>{importDraft.warnings.map(warning => <p key={warning} className="mt-1 text-amber-700">⚠️ {warning}</p>)}</div>}
                                 <div className="flex gap-2 mb-4">
                                     <button data-testid="origens-form-tipo-proprio" type="button" onClick={() => setSourceType('own')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors ${sourceType === 'own' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>💰 Próprio</button>
                                     <button data-testid="origens-form-tipo-banco" type="button" onClick={() => setSourceType('bank')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors ${sourceType === 'bank' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-600'}`}>🏦 Banco</button>
@@ -90,11 +145,12 @@
                                             <label className="text-[10px] text-gray-500 font-bold block mb-1">Vencimento da 1ª Parcela</label>
                                             <input type="date" className="w-full p-2.5 border rounded-xl bg-gray-50 text-sm" value={bankFirstDueDate} onChange={(e) => setBankFirstDueDate(e.target.value)} />
                                         </div>
+                                        {bankSchedule.length > 0 && <div className="p-3 rounded-xl bg-purple-50 border border-purple-100 text-xs text-purple-800"><p className="font-bold">Cronograma importado: {bankSchedule.length} parcelas</p><p className="mt-1">{bankSchedule.slice(0, 3).map(item => `#${item.number} ${item.dueDate ? formatDate(item.dueDate) : 'data a conferir'} · ${formatMoney(item.amount)}`).join(' • ')}</p></div>}
                                     </div>
                                 )}
                                 <div className="flex gap-2 mt-4">
-                                    <button type="button" onClick={() => { setShowForm(false); setSourceType('own'); }} className="flex-1 p-3 bg-gray-100 rounded-xl font-medium">Cancelar</button>
-                                    <button type="submit" className="flex-1 p-3 bg-blue-600 text-white rounded-xl font-bold">Salvar</button>
+                                    <button type="button" onClick={() => { setShowForm(false); setSourceType('own'); resetBankFields(); }} className="flex-1 p-3 bg-gray-100 rounded-xl font-medium">Cancelar</button>
+                                    <button type="submit" className="flex-1 p-3 bg-blue-600 text-white rounded-xl font-bold">{importDraft ? 'Confirmar criação' : 'Salvar'}</button>
                                 </div>
                             </form>
                         )}
@@ -140,6 +196,19 @@
                                                 </div>
                                                 <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1.5"><div className="bg-purple-500 h-1.5 rounded-full" style={{ width: `${Math.min(100, (bankContract.resolvedInPersonalControlCount / source.totalInstallments) * 100)}%` }}></div></div>
                                                 {bankContract.pendingNormalCount > 0 && <p className="text-[10px] text-amber-600 font-bold mt-1">{bankContract.pendingNormalCount} parcela descontada em folha</p>}
+                                                {(() => {
+                                                    const links = FinanceEngine.getBankOperationLinks({ bank: source, clients });
+                                                    return (
+                                                        <div className="mt-3 rounded-lg bg-purple-50 border border-purple-100 p-2.5 text-[10px] text-purple-800">
+                                                            <p className="font-bold">Operação com clientes</p>
+                                                            {links.loans.length > 0 ? <>
+                                                                <p className="mt-1">{links.clientCount} cliente{links.clientCount === 1 ? '' : 's'} · principal exposto: {formatMoney(links.outstandingPrincipal)}</p>
+                                                                <p className="mt-0.5">Juros mensais previstos: {formatMoney(links.monthlyInterest)}</p>
+                                                                <p className="mt-1 text-purple-600">{links.loans.map(link => `${link.clientName} (${formatMoney(link.outstandingPrincipal)})`).join(' · ')}</p>
+                                                            </> : <p className="mt-1 text-amber-700">Ainda não há cliente vinculado. Use a edição do empréstimo do cliente para definir esta origem.</p>}
+                                                        </div>
+                                                    );
+                                                })()}
                                             </div>
                                         )}
                                         <button data-testid={`source-remove-${source.id}`} onClick={() => {
