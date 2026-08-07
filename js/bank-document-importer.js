@@ -109,8 +109,12 @@
     };
 
     const extractPdfText = async (file) => {
-        if (root.pdfjsReady) await root.pdfjsReady;
-        if (!root.pdfjsLib) throw new Error('Leitor de PDF ainda não foi carregado. Tente novamente em alguns segundos.');
+        try {
+            if (root.pdfjsReady) await root.pdfjsReady;
+        } catch (_) {
+            throw new Error('Não foi possível iniciar o leitor de PDF deste aplicativo. Atualize a página e tente novamente.');
+        }
+        if (!root.pdfjsLib) throw new Error('Leitor de PDF indisponível. Atualize a página e tente novamente.');
         const buffer = await file.arrayBuffer();
         const pdf = await root.pdfjsLib.getDocument({ data: buffer }).promise;
         const pages = await Promise.all(Array.from({ length: pdf.numPages }, async (_, index) => {
