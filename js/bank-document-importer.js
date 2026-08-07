@@ -81,9 +81,9 @@
         const rateSection = capture(normalized, /(Custo\s+Efet(?:ivo)?\.?\s+Total[\s\S]*?)(?:Movimenta[cç][oõ]es\s+Efetuadas|$)/i);
         const monthlyRates = [...rateSection.matchAll(/([\d.,]+)\s*%\s*a\.m\.?/gi)].map(match => money(match[1]));
         const annualRates = [...rateSection.matchAll(/([\d.,]+)\s*%\s*a\.a\.?/gi)].map(match => money(match[1]));
-        const contractMonthlyRate = money(capture(normalized, /Tx\.\s*Efet\.\s*do contrato\s*:\s*([\d.,]+)\s*%\s*a\.m\.?/i)) || monthlyRates[1] || 0;
+        const contractMonthlyRate = monthlyRates[1] || money(capture(normalized, /Tx\.\s*Efet\.\s*do contrato\s*:\s*([\d.,]+)\s*%\s*a\.m\.?/i)) || 0;
         const contractAnnualRate = annualRates[1] || 0;
-        const cetMonthlyRate = money(capture(normalized, /Custo\s+Efet(?:ivo)?\.?\s+Total\s*(?:\(?CET\)?)?\s*:\s*([\d.,]+)\s*%\s*a\.m\.?/i)) || monthlyRates[0] || 0;
+        const cetMonthlyRate = monthlyRates[0] || money(capture(normalized, /Custo\s+Efet(?:ivo)?\.?\s+Total\s*(?:\(?CET\)?)?\s*:\s*([\d.,]+)\s*%\s*a\.m\.?/i)) || 0;
         const cetAnnualRate = annualRates[0] || 0;
         const total = Number(capture(normalized, /Nr\.\s*Parcelas\s*:\s*(\d+)/i));
         const scheduleRows = [...String(text || '').matchAll(/^\s*(\d+)\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}\/\d{2}\/\d{4})?\s+([\d.]+,\d{2})/gm)]
