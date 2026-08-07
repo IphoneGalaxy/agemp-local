@@ -160,13 +160,17 @@ test('usa vencimentos individuais quando o contrato os informa', () => {
 test('importa contrato 99Pay como rascunho com cronograma individual e sem pagamentos', () => {
     const draft = BankDocumentImporter.parse(`CÉDULA DE CRÉDITO BANCÁRIO Nº. abc99
         Valor Principal*: R$5.043,90 Valor Liberado: R$5.000,00 IOF: R$43,90
-        Juros Remuneratórios: Juros pré-fixados de 4,4900 % a.m.
+        Juros Remuneratórios: Juros pré-fixados de 4,4900 % a.m. exponencial ao mês, equivalente à taxa
+        de 69,3935 % a.a. exponencial ao ano
         Custo Efetivo Total (CET) Mensal: 5,0333%
+        Custo Efetivo Total (CET) Anual: 80,2713%
         1 03/09/2026 R$1.831,75 2 05/10/2026 R$1.831,75 3 03/11/2026 R$1.831,75
         Data de Emissão desta CÉDULA: 06/08/2026`);
     assert.equal(draft.provider, '99Pay');
     assert.equal(draft.source.receivedAmount, 5000);
     assert.equal(draft.source.financedAmount, 5043.9);
+    assert.equal(draft.source.contractRateAnnual, 69.3935);
+    assert.equal(draft.source.cetAnnual, 80.2713);
     assert.deepEqual(draft.source.installments.map(item => item.dueDate), ['2026-09-03', '2026-10-05', '2026-11-03']);
     assert.equal(draft.source.importMetadata.importMode, 'draft_review_required');
 });
@@ -176,14 +180,17 @@ test('importa demonstrativo Santander sem converter movimentações em confirma�
         Nr. Contrato: 796465673 Dt. Formalização: 01/06/2026
         Valor Solicitado: 11.500,00 Vlr. Financiado: 11.854,41 IOF: 354,41
         Dt. 1º Vcto: 05/07/2026 Nr. Parcelas: 61
-        1 05/07/2026 06/07/2026 302,47 297,32 5,15 Custo Efetivo Total CET: 1,67 % a.m.
-        Tx. Efet. do contrato: 1,5268 % a.m. Movimentações Efetuadas Liquidação`);
+        Custo Efetivo Total CET: Tx. Efet. do contrato:
+        1,67 % a.m. 21,92 % a.a. 1,5268 % a.m. 19,9419 % a.a.
+        1 05/07/2026 06/07/2026 302,47 297,32 5,15 Movimentações Efetuadas Liquidação`);
     assert.equal(draft.provider, 'Santander');
     assert.equal(draft.source.contractNumber, '796465673');
     assert.equal(draft.source.totalInstallments, 61);
     assert.equal(draft.source.installments.length, 61);
     assert.equal(draft.source.firstDueDate, '2026-07-05');
     assert.equal(draft.source.installmentValue, 302.47);
+    assert.equal(draft.source.contractRateAnnual, 19.9419);
+    assert.equal(draft.source.cetAnnual, 21.92);
     assert.match(draft.warnings[0], /Nenhum pagamento/);
 });
 
@@ -585,7 +592,9 @@ test('backup e restauração preservam o cenário completo 99Pay → Mello sem c
             financedAmount: 5043.9,
             iofAmount: 43.9,
             monthlyRate: 4.49,
+            contractRateAnnual: 69.3935,
             cetMonthly: 5.0333,
+            cetAnnual: 80.2713,
             totalInstallments: 3,
             installmentValue: 1831.75,
             totalToPay: 5495.25,
@@ -614,6 +623,9 @@ test('backup e restauração preservam o cenário completo 99Pay → Mello sem c
 
     assert.deepEqual(bank.installments.map(item => [item.number, item.dueDate, item.amount]), [[1, '2026-09-03', 1831.75], [2, '2026-10-05', 1831.75], [3, '2026-11-03', 1831.75]]);
     assert.equal(bank.importMetadata.provider, '99Pay');
+    assert.equal(bank.importMetadata.importMode, 'confirmed');
+    assert.equal(bank.contractRateAnnual, 69.3935);
+    assert.equal(bank.cetAnnual, 80.2713);
     assert.equal(loan.sourceId, bank.id);
     assert.equal(loan.payments[0].kind, FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY);
     assert.equal(restored.bankPayments[0].status, FinanceEngine.BANK_PAYMENT_STATUS.WITHHELD_PENDING_BANK);
