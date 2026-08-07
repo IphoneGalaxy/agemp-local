@@ -32,7 +32,9 @@
             financedAmount: values.financedAmount || values.receivedAmount,
             monthlyRate: values.monthlyRate || 0,
             contractRateMonthly: values.monthlyRate || 0,
+            contractRateAnnual: values.annualRate || 0,
             cetMonthly: values.cetMonthly || 0,
+            cetAnnual: values.cetAnnual || 0,
             totalInstallments: values.installments.length,
             installmentValue: values.installments[0]?.amount || 0,
             totalToPay: values.installments.reduce((total, item) => total + item.amount, 0),
@@ -66,7 +68,9 @@
             financedAmount: money(capture(normalized, /Valor Principal\*?\s*:?\s*R?\$?\s*([\d.]+,\d{2})/i)),
             iofAmount: money(capture(normalized, /IOF\s*:?\s*R?\$?\s*([\d.]+,\d{2})/i)),
             monthlyRate: money(capture(normalized, /Juros [^:]*:\s*[^\d]*([\d,]+)\s*%\s*a\.m\./i)),
+            annualRate: money(capture(normalized, /Juros [^:]*:[\s\S]*?equivalente\s+[àa]\s+taxa\s+de\s+([\d,]+)\s*%\s*a\.a\./i)),
             cetMonthly: money(capture(normalized, /CET\) Mensal\s*:?\s*([\d,]+)%/i)),
+            cetAnnual: money(capture(normalized, /CET\) Anual\s*:?\s*([\d,]+)%/i)),
             startDate: isoDate(capture(normalized, /Data de (?:Emiss[aã]o|Libera[cç][aã]o dos Recursos)[^\d]*(\d{2}\/\d{2}\/\d{4})/i)),
             installments
         });
@@ -76,8 +80,11 @@
         const normalized = normalizeText(text);
         const rateSection = capture(normalized, /(Custo\s+Efet(?:ivo)?\.?\s+Total[\s\S]*?)(?:Movimenta[cç][oõ]es\s+Efetuadas|$)/i);
         const monthlyRates = [...rateSection.matchAll(/([\d.,]+)\s*%\s*a\.m\.?/gi)].map(match => money(match[1]));
+        const annualRates = [...rateSection.matchAll(/([\d.,]+)\s*%\s*a\.a\.?/gi)].map(match => money(match[1]));
         const contractMonthlyRate = money(capture(normalized, /Tx\.\s*Efet\.\s*do contrato\s*:\s*([\d.,]+)\s*%\s*a\.m\.?/i)) || monthlyRates[1] || 0;
+        const contractAnnualRate = money(capture(normalized, /Tx\.\s*Efet\.\s*do contrato\s*:\s*[\s\S]*?([\d.,]+)\s*%\s*a\.a\.?/i)) || annualRates[1] || 0;
         const cetMonthlyRate = money(capture(normalized, /Custo\s+Efet(?:ivo)?\.?\s+Total\s*(?:\(?CET\)?)?\s*:\s*([\d.,]+)\s*%\s*a\.m\.?/i)) || monthlyRates[0] || 0;
+        const cetAnnualRate = money(capture(normalized, /Custo\s+Efet(?:ivo)?\.?\s+Total\s*(?:\(?CET\)?)?\s*:\s*[\s\S]*?([\d.,]+)\s*%\s*a\.a\.?/i)) || annualRates[0] || 0;
         const total = Number(capture(normalized, /Nr\.\s*Parcelas\s*:\s*(\d+)/i));
         const scheduleRows = [...String(text || '').matchAll(/^\s*(\d+)\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}\/\d{2}\/\d{4})?\s+([\d.]+,\d{2})/gm)]
             .map(match => ({ number: Number(match[1]), dueDate: isoDate(match[2]), amount: money(match[3]) }));
@@ -98,7 +105,9 @@
             financedAmount: money(capture(normalized, /Vlr\.\s*Financiado\s*:\s*([\d.]+,\d{2})/i)),
             iofAmount: money(capture(normalized, /IOF\s*:\s*([\d.]+,\d{2})/i)),
             monthlyRate: contractMonthlyRate,
+            annualRate: contractAnnualRate,
             cetMonthly: cetMonthlyRate,
+            cetAnnual: cetAnnualRate,
             startDate: isoDate(capture(normalized, /Dt\.\s*Formaliza[cç][aã]o\s*:\s*(\d{2}\/\d{2}\/\d{4})/i)),
             installments,
             warnings: ['O demonstrativo pode conter parcelas já liquidadas. Nenhum pagamento será importado ou confirmado automaticamente.']
