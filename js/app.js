@@ -31,7 +31,7 @@
                     const parsed = savedData ? JSON.parse(savedData) : {};
 
                     if (savedData && parsed.schemaVersion !== FinanceEngine.SCHEMA_VERSION) {
-                        const safetyKey = 'loanManagerDataBackupBeforeV2';
+                        const safetyKey = 'loanManagerDataBackupBeforeV3';
                         if (!localStorage.getItem(safetyKey)) localStorage.setItem(safetyKey, savedData);
                     }
 
@@ -148,17 +148,18 @@
             const utils = { showToast, getCapitalBalance, getSourceSummary };
 
             return (
-                <div className="max-w-md mx-auto bg-gray-50 min-h-screen shadow-2xl relative overflow-hidden flex flex-col">
+                <div className={`${activeTab === 'planning' ? 'max-w-[1400px]' : 'max-w-md'} mx-auto bg-gray-50 min-h-screen shadow-2xl relative overflow-hidden flex flex-col transition-[max-width] duration-200`}>
                     <div className="bg-white pt-10 pb-4 px-6 shadow-sm z-0">
                         <h1 className="text-2xl font-black text-gray-800 tracking-tight">Finanças <span className="text-blue-600">Pro</span></h1>
                     </div>
-                    <div className="flex bg-white px-4 border-b border-gray-200">
-                        <button data-testid="nav-painel" className={`flex-1 py-3 text-center text-sm transition-colors ${activeTab === 'dashboard' ? 'tab-active' : 'text-gray-500'}`} onClick={() => setActiveTab('dashboard')}>Painel</button>
-                        <button data-testid="nav-origens" className={`flex-1 py-3 text-center text-sm transition-colors ${activeTab === 'origins' ? 'tab-active' : 'text-gray-500'}`} onClick={() => setActiveTab('origins')}>Origens</button>
-                        <button data-testid="nav-clientes" className={`flex-1 py-3 text-center text-sm transition-colors ${activeTab === 'clients' ? 'tab-active' : 'text-gray-500'}`} onClick={() => setActiveTab('clients')}>Clientes</button>
+                    <div className="flex bg-white px-2 sm:px-4 border-b border-gray-200 overflow-x-auto hide-scroll" role="navigation" aria-label="Navegação principal">
+                        <button data-testid="nav-painel" className={`min-w-[78px] flex-1 py-3 text-center text-sm transition-colors ${activeTab === 'dashboard' ? 'tab-active' : 'text-gray-500'}`} onClick={() => setActiveTab('dashboard')}>Painel</button>
+                        <button data-testid="nav-origens" className={`min-w-[78px] flex-1 py-3 text-center text-sm transition-colors ${activeTab === 'origins' ? 'tab-active' : 'text-gray-500'}`} onClick={() => setActiveTab('origins')}>Origens</button>
+                        <button data-testid="nav-clientes" className={`min-w-[78px] flex-1 py-3 text-center text-sm transition-colors ${activeTab === 'clients' ? 'tab-active' : 'text-gray-500'}`} onClick={() => setActiveTab('clients')}>Clientes</button>
+                        <button data-testid="nav-planejamento" className={`min-w-[112px] flex-1 py-3 text-center text-sm transition-colors ${activeTab === 'planning' ? 'tab-active' : 'text-gray-500'}`} onClick={() => setActiveTab('planning')}>Planejamento</button>
                     </div>
                     <div className="flex-1 overflow-y-auto hide-scroll pb-10">
-                        {activeTab === 'dashboard' ? <Dashboard onExport={handleExportBackup} onImport={handleImportBackup} state={state} actions={actions} utils={utils} /> : activeTab === 'origins' ? <SourcesList state={state} actions={actions} utils={utils} /> : <ClientsList state={state} actions={actions} utils={utils} />}
+                        {activeTab === 'dashboard' ? <Dashboard onExport={handleExportBackup} onImport={handleImportBackup} state={state} actions={actions} utils={utils} /> : activeTab === 'origins' ? <SourcesList state={state} actions={actions} utils={utils} /> : activeTab === 'planning' ? <PlanningView state={state} utils={utils} /> : <ClientsList state={state} actions={actions} utils={utils} />}
                     </div>
                     {selectedClient && (
                         <ClientView clientData={globalStats.processedClients.find(c => c.id === selectedClient.id)} availableMoney={globalStats.availableMoney} state={state} actions={actions} utils={utils} />

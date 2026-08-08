@@ -11,6 +11,7 @@
         if (!compact) return 0;
         return Number(compact.includes(',') ? compact.replace(/\./g, '').replace(',', '.') : compact) || 0;
     };
+    const roundMoney = value => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
     const isoDate = (value) => {
         const match = /(\d{2})\/(\d{2})\/(\d{4})/.exec(value || '');
         return match ? `${match[3]}-${match[2]}-${match[1]}` : '';
@@ -36,13 +37,19 @@
             cetMonthly: values.cetMonthly || 0,
             cetAnnual: values.cetAnnual || 0,
             totalInstallments: values.installments.length,
-            installmentValue: values.installments[0]?.amount || 0,
-            totalToPay: values.installments.reduce((total, item) => total + item.amount, 0),
+            installmentValue: values.nominalInstallmentValue || values.installments[0]?.nominalAmount || values.installments[0]?.amount || 0,
+            nominalInstallmentValue: values.nominalInstallmentValue || values.installments[0]?.nominalAmount || values.installments[0]?.amount || 0,
+            totalToPay: roundMoney(values.totalToPay || values.installments.reduce((total, item) => total + Number(item.nominalAmount ?? item.amount ?? 0), 0)),
             additionalFees: values.iofAmount || 0,
             iofAmount: values.iofAmount || 0,
             startDate: values.startDate || '',
             firstDueDate: values.installments[0]?.dueDate || '',
             installments: values.installments,
+            officialBalanceSnapshots: values.officialBalanceSnapshots || [],
+            projectionMode: values.projectionMode || 'fixed_installments',
+            amortizationStrategy: values.amortizationStrategy || 'last_installments_first',
+            carryoverEnabled: true,
+            documentFindings: values.documentFindings || null,
             importMetadata: {
                 provider: values.provider,
                 documentType: values.documentType,
@@ -76,6 +83,25 @@
         });
     };
 
+    const parseSantanderTableRows = (section, status, nominalFallback) => String(section || '').split(/\r?\n/).map(line => {
+        const row = /^\s*(\d+)\s+(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}\/\d{2}\/\d{4}))?\s+((?:[\d.]+,\d{2}\s+){3,12})/.exec(line);
+        if (!row) return null;
+        const values = [...row[4].matchAll(/[\d.]+,\d{2}/g)].map(match => money(match[0]));
+        if (values.length < 3) return null;
+        const hasPaymentDate = Boolean(row[3]);
+        const nominalAmount = hasPaymentDate ? values[0] : Number(nominalFallback || 0);
+        const presentValue = hasPaymentDate ? values[3] : values[0];
+        return {
+            number: Number(row[1]), dueDate: isoDate(row[2]), paymentDate: isoDate(row[3]),
+            amount: nominalAmount || values[0], nominalAmount: nominalAmount || values[0], presentValue,
+            principalPresentValue: values[1], interestPresentValue: values[2],
+            discountAmount: hasPaymentDate ? (values[6] || 0) : 0,
+            totalPaid: hasPaymentDate ? (values[7] || presentValue) : 0,
+            documentStatus: status,
+            quality: status === 'open' ? 'recalculated' : 'confirmed'
+        };
+    }).filter(Boolean);
+
     const parseSantander = (text) => {
         const normalized = normalizeText(text);
         const rateSection = capture(normalized, /(Custo\s+Efet(?:ivo)?\.?\s+Total[\s\S]*?)(?:Movimenta[cç][oõ]es\s+Efetuadas|$)/i);
@@ -86,18 +112,43 @@
         const cetMonthlyRate = monthlyRates[0] || money(capture(normalized, /Custo\s+Efet(?:ivo)?\.?\s+Total\s*(?:\(?CET\)?)?\s*:\s*([\d.,]+)\s*%\s*a\.m\.?/i)) || 0;
         const cetAnnualRate = annualRates[0] || 0;
         const total = Number(capture(normalized, /Nr\.\s*Parcelas\s*:\s*(\d+)/i));
-        const scheduleRows = [...String(text || '').matchAll(/^\s*(\d+)\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}\/\d{2}\/\d{4})?\s+([\d.]+,\d{2})/gm)]
-            .map(match => ({ number: Number(match[1]), dueDate: isoDate(match[2]), amount: money(match[3]) }));
-        const uniqueRows = scheduleRows.filter((row, index, all) => all.findIndex(item => item.number === row.number) === index);
-        const scheduleLine = uniqueRows[0];
-        const installmentValue = money(scheduleLine?.amount || capture(normalized, /Valor da Parcela[^\d]*([\d.]+,\d{2})/i));
+        const raw = String(text || '');
+        const movementSection = raw.split(/Movimenta[cç][oõ]es\s+Efetuadas/i)[1]?.split(/PARCELAS\s+A\s+VENCER/i)[0] || '';
+        const openSection = raw.split(/PARCELAS\s+A\s+VENCER/i)[1]?.split(/RESUMO/i)[0] || '';
+        const preliminaryMovementRows = parseSantanderTableRows(movementSection, 'settled', 0);
+        const fallbackMovement = /(?:^|\s)(\d+)\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})/.exec(raw);
+        const installmentValue = money(preliminaryMovementRows[0]?.nominalAmount || fallbackMovement?.[4] || capture(normalized, /VLR\.\s*PARC[\s\S]{0,400}?([\d.]+,\d{2})/i) || capture(normalized, /Valor da Parcela[^\d]*([\d.]+,\d{2})/i));
         if (!total || !installmentValue) return null;
+        const detectedMovementRows = parseSantanderTableRows(movementSection, 'settled', installmentValue);
+        if (detectedMovementRows.length === 0 && fallbackMovement) detectedMovementRows.push({
+            number: Number(fallbackMovement[1]), dueDate: isoDate(fallbackMovement[2]), paymentDate: isoDate(fallbackMovement[3]),
+            amount: installmentValue, nominalAmount: installmentValue, presentValue: installmentValue,
+            principalPresentValue: money(fallbackMovement[5]), interestPresentValue: money(fallbackMovement[6]),
+            discountAmount: 0, totalPaid: installmentValue, documentStatus: 'settled', quality: 'confirmed'
+        });
+        const movementRows = detectedMovementRows.map(row => ({
+            ...row,
+            documentStatus: row.number <= 2 ? 'paid' : 'anticipated'
+        }));
+        const openRows = parseSantanderTableRows(openSection, 'open', installmentValue);
+        const allDetectedRows = [...movementRows, ...openRows];
         const firstDueDate = isoDate(capture(normalized, /Dt\.\s*1[ºo]\s*Vcto\.?\s*:\s*(\d{2}\/\d{2}\/\d{4})/i));
         const installments = Array.from({ length: total }, (_, index) => {
-            const row = uniqueRows.find(item => item.number === index + 1);
-            return row || { number: index + 1, amount: installmentValue };
+            const row = allDetectedRows.find(item => item.number === index + 1);
+            return row || { number: index + 1, amount: installmentValue, nominalAmount: installmentValue };
         });
         if (firstDueDate) installments[0].dueDate = firstDueDate;
+        const balanceAmount = money(capture(normalized, /D[ií]vida\s+para\s+Liquida[cç][aã]o\s*:\s*([\d.]+,\d{2})/i));
+        const balanceDate = isoDate(capture(normalized, /D[ií]vida\s+para\s+Liquida[cç][aã]o[\s\S]{0,100}?Em\s*:\s*(\d{2}\/\d{2}\/\d{4})/i)) ||
+            isoDate(capture(normalized, /Data\s+Emiss[aã]o\s+DDC\s*:\s*(\d{2}\/\d{2}\/\d{4})/i));
+        const remainingNumbers = openRows.map(row => row.number).sort((a, b) => a - b);
+        const officialBalanceSnapshots = balanceAmount ? [{
+            date: balanceDate || '', amount: balanceAmount,
+            nominalRemaining: openRows.reduce((totalValue, row) => totalValue + installmentValue, 0),
+            remainingInstallmentNumbers: remainingNumbers,
+            presentValues: openRows.map(row => ({ number: row.number, amount: row.presentValue })),
+            origin: 'pdf', quality: 'confirmed'
+        }] : [];
         return buildDraft({
             provider: 'Santander', documentType: 'Demonstrativo Descritivo de Crédito', name: 'Santander',
             contractNumber: capture(normalized, /Nr\.\s*Contrato\s*:\s*([\w-]+)/i),
@@ -110,7 +161,19 @@
             cetAnnual: cetAnnualRate,
             startDate: isoDate(capture(normalized, /Dt\.\s*Formaliza[cç][aã]o\s*:\s*(\d{2}\/\d{2}\/\d{4})/i)),
             installments,
-            warnings: ['O demonstrativo pode conter parcelas já liquidadas. Nenhum pagamento será importado ou confirmado automaticamente.']
+            nominalInstallmentValue: installmentValue,
+            totalToPay: installmentValue * total,
+            officialBalanceSnapshots,
+            projectionMode: 'discounted_last_installments',
+            documentFindings: {
+                paidInstallments: movementRows.filter(row => row.documentStatus === 'paid'),
+                anticipatedInstallments: movementRows.filter(row => row.documentStatus === 'anticipated'),
+                openInstallments: openRows,
+                totalDetectedPaid: movementRows.reduce((sum, row) => sum + Number(row.totalPaid || 0), 0),
+                totalDetectedDiscount: movementRows.reduce((sum, row) => sum + Number(row.discountAmount || 0), 0),
+                requiresMovementReview: movementRows.length > 0
+            },
+            warnings: ['Foram separados a parcela nominal e os valores presentes. Nenhum pagamento será importado ou confirmado automaticamente.', 'As movimentações detectadas exigem revisão antes de qualquer lançamento.']
         });
     };
 

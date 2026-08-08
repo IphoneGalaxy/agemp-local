@@ -194,7 +194,7 @@ test('importa demonstrativo Santander sem converter movimentações em confirma�
     assert.match(draft.warnings[0], /Nenhum pagamento/);
 });
 
-test('migra dados antigos para a versão 2 e vincula registros sem origem ao Capital Próprio', () => {
+test('migra dados antigos para a versão 3 e vincula registros sem origem ao Capital Próprio', () => {
     const migrated = FinanceEngine.migrateData({
         fundsTransactions: [{ id: 'fund-1', date: '2026-01-01', amount: 1000 }],
         clients: [{
@@ -206,7 +206,7 @@ test('migra dados antigos para a versão 2 e vincula registros sem origem ao Cap
         bankPayments: []
     });
 
-    assert.equal(migrated.schemaVersion, 2);
+    assert.equal(migrated.schemaVersion, 3);
     assert.equal(migrated.fundsTransactions[0].sourceId, ownSource.id);
     assert.equal(migrated.clients[0].loans[0].sourceId, ownSource.id);
     assert.equal(migrated.capitalSources[0].totalToPay, 18450.67);
@@ -557,7 +557,7 @@ test('cria backup JSON canônico sem usar documento externo para confirmar parce
     });
 
     assert.equal(backup.exportType, FinanceEngine.EXPORT_TYPE);
-    assert.equal(backup.schemaVersion, 2);
+    assert.equal(backup.schemaVersion, 3);
     assert.match(backup.exportedAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.equal(backup.bankPayments[0].status, FinanceEngine.BANK_PAYMENT_STATUS.WITHHELD_PENDING_BANK);
     assert.equal(backup.bankPayments[0].confirmationDate, undefined);
@@ -695,4 +695,48 @@ test('aceita saldo oficial zero como contrato quitado', () => {
 test('mantém o vencimento no último dia quando o mês é mais curto', () => {
     assert.equal(FinanceEngine.getInstallmentDueDate('2026-01-31', 2), '2026-02-28');
     assert.equal(FinanceEngine.getInstallmentDueDate('2024-01-31', 2), '2024-02-29');
+});
+
+test('preserva pagamento não identificado sem inventar juros ou amortização', () => {
+    const loan = {
+        id: 'loan-review', amount: 1000, interestRate: 10, sourceId: ownSource.id,
+        payments: [{ id: 'payment-review', date: '2026-08-01', amount: 250, kind: FinanceEngine.CLIENT_PAYMENT_KIND.UNIDENTIFIED }]
+    };
+    const result = FinanceEngine.calculateLoan(loan);
+    assert.equal(result.currentPrincipal, 1000);
+    assert.equal(result.totalInterestReceived, 0);
+    assert.equal(result.totalPrincipalRecovered, 0);
+    assert.equal(result.totalUnallocated, 250);
+    assert.ok(FinanceEngine.findIntegrityIssues({
+        capitalSources: [ownSource], clients: [{ id: 'client-review', name: 'Revisão', loans: [loan] }],
+        fundsTransactions: [], bankPayments: []
+    }).some(issue => issue.type === 'unidentified-client-payment'));
+});
+
+test('reconcilia demonstrativo Santander com cadastro legado sem duplicar a operação', () => {
+    const legacySantander = {
+        id: 'mdewd3uvf', type: 'bank', name: 'Santander', receivedAmount: 11500,
+        totalInstallments: 61, installmentValue: 302.47, startDate: '2026-06-01',
+        totalPaidToBank: 3747.96, paidInstallments: 2,
+        officialBalanceSnapshots: [{ id: 'official-2026-08-04', date: '2026-08-04', amount: 8766.53 }]
+    };
+    const imported = {
+        type: 'bank', name: 'Santander', receivedAmount: 11500, financedAmount: 11854.41,
+        totalInstallments: 61, installmentValue: 302.47, nominalInstallmentValue: 302.47,
+        totalToPay: 18450.67, startDate: '2026-06-01', contractNumber: '796465673',
+        projectionMode: 'discounted_last_installments', installments: [{ number: 1, nominalAmount: 302.47 }],
+        officialBalanceSnapshots: [{ date: '2026-08-06', amount: 8472.78, remainingInstallmentNumbers: FinanceEngine.rangeInclusive(3, 39) }],
+        importMetadata: { provider: 'Santander', documentType: 'Demonstrativo Descritivo de Crédito' }
+    };
+
+    const match = FinanceEngine.findMatchingBankSource([legacySantander, ownSource], imported);
+    assert.equal(match.id, legacySantander.id);
+    const merged = FinanceEngine.mergeImportedBankSource(match, imported, { ...imported.importMetadata, importMode: 'confirmed' });
+    assert.equal(merged.id, legacySantander.id);
+    assert.equal(merged.totalPaidToBank, 3747.96);
+    assert.equal(merged.paidInstallments, 2);
+    assert.equal(merged.contractNumber, '796465673');
+    assert.equal(merged.officialBalanceSnapshots.length, 2);
+    assert.equal(merged.officialBalanceSnapshots.at(-1).amount, 8472.78);
+    assert.equal(merged.projectionMode, 'discounted_last_installments');
 });

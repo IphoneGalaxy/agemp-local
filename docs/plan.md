@@ -1,13 +1,48 @@
-# Finanças Pro — Motor Financeiro V2
+# Finanças Pro — Motor Financeiro V3 e Planejamento
 
 ## Objetivo
 
-Aplicativo local para controlar capital próprio, capital bancário, empréstimos a clientes, recebimentos mensais e a quitação antecipada de contratos bancários. Os dados ficam no `localStorage` e podem ser exportados ou restaurados por arquivo.
+Aplicativo local para controlar capital próprio, capital bancário, empréstimos a clientes, recebimentos mensais, quitação antecipada de contratos bancários e projeções financeiras auditáveis. Os dados ficam no `localStorage` e podem ser exportados ou restaurados por arquivo.
+
+## Atualização V3 — 08/08/2026
+
+- [x] Nova aba exclusiva **Planejamento**, sem alterar o fluxo das telas operacionais existentes
+- [x] Visão geral responsiva com indicadores confirmados, recalculados e estimados
+- [x] Projeção individual dos juros de cada empréstimo e marco de 100% do principal
+- [x] Empréstimos quitados interrompem a projeção automaticamente
+- [x] Projeção da 99Pay com parcelas fixas, complemento próprio e quatro marcos financeiros
+- [x] Projeção do Santander pelo saldo oficial, taxa contratual e antecipação das últimas parcelas
+- [x] Parcela nominal separada do valor presente no demonstrativo Santander
+- [x] Importação do PDF continua como rascunho: movimentações detectadas exigem revisão manual
+- [x] Pagamentos de juros de vários meses e valores não identificados têm classificações próprias
+- [x] Valores não identificados não alteram juros nem principal até revisão
+- [x] Linha do tempo financeira mensal com realizado e estimado identificados
+- [x] Exportação Excel configurável por cliente, banco, período, conteúdo e inclusão de projeções
+- [x] Design system da UI UX Pro Max integrado e documentado em `design-system/agemp-local/`
+- [x] Migração idempotente para `schemaVersion: 3` com backup de segurança local
+- [x] Testes unitários, teste visual responsivo e download/leitura real do arquivo Excel
+
+### Valores de referência validados
+
+| Operação | Resultado projetado |
+|---|---:|
+| Santander — total final pago | R$ 12.677,71 |
+| Santander — custo financeiro | R$ 1.177,71 |
+| Santander — economia nominal | R$ 5.772,96 |
+| Santander — quitação | Fevereiro de 2027 |
+| Santander — operação positiva | Março de 2027 |
+| 99Pay — total final pago | R$ 5.495,25 |
+| 99Pay — complemento próprio | R$ 2.495,25 |
+| 99Pay — quitação | Novembro de 2026 |
+
+Os centavos do Santander são recalculados mês a mês sobre o saldo oficial de R$ 8.472,78 com taxa contratual de 1,5268% a.m.; por isso o resultado pode diferir em R$ 0,01 de uma simulação que arredonde apenas no final.
+
+## Histórico V2
 
 Implementação concluída na branch `fix/motor-financeiro-v2` e incorporada à `main` pelo PR #1.
 Versão publicada: GitHub Pages em `https://iphonegalaxy.github.io/agemp-local/`.
 
-### Estado atual em 04/08/2026
+### Estado em 04/08/2026
 
 - O site público responde normalmente e contém o motor financeiro V2.
 - A `main` publicada corresponde ao código revisado da branch de correção.
@@ -136,6 +171,9 @@ index.html
 assets/css/style.css
 js/
   finance-engine.js
+  projection-engine.js
+  report-engine.js
+  excel-report-exporter.js
   utils.js
   icons.js
   app.js
@@ -146,8 +184,10 @@ js/
     SourcesList.js
     ClientsList.js
     ClientView.js
+    PlanningView.js
 tests/
   finance-engine.test.js
+  projection-engine.test.js
 docs/
   plan.md
 ```
@@ -155,7 +195,7 @@ docs/
 ## Verificação local
 
 ```bash
-node --test tests/finance-engine.test.js
+node --test tests/*.test.js
 python -m http.server 8080
 ```
 
