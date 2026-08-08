@@ -78,19 +78,35 @@
                             importMode: 'confirmed',
                             confirmedAt: new Date().toISOString()
                         } : undefined;
-                        const duplicateSource = importDraft?.source?.contractNumber && capitalSources.find(source => (
-                            source.type === 'bank' && source.contractNumber === importDraft.source.contractNumber &&
-                            source.importMetadata?.provider === importDraft.provider
-                        ));
+                        const importedSource = importDraft?.source ? {
+                            ...importDraft.source,
+                            name: sourceName.trim(),
+                            receivedAmount: received,
+                            financedAmount: Number(bankFinanced) || received,
+                            monthlyRate: Number(bankRate) || 0,
+                            contractRateMonthly: Number(bankRate) || 0,
+                            contractRateAnnual: Number(bankAnnualRate) || 0,
+                            cetMonthly: Number(bankCet) || 0,
+                            cetAnnual: Number(bankCetAnnual) || 0,
+                            totalInstallments: installments,
+                            installmentValue: installmentVal,
+                            nominalInstallmentValue: importDraft.source.nominalInstallmentValue || installmentVal,
+                            totalToPay: importDraft.source.totalToPay || (installmentVal * installments),
+                            additionalFees: Number(bankFees) || 0,
+                            iofAmount: Number(bankFees) || 0,
+                            startDate: bankStartDate,
+                            firstDueDate: bankFirstDueDate || bankStartDate,
+                            installments: bankSchedule.map(item => ({ ...item }))
+                        } : null;
+                        const duplicateSource = importedSource
+                            ? FinanceEngine.findMatchingBankSource(capitalSources, importedSource)
+                            : null;
                         if (duplicateSource) {
-                            setCapitalSources(capitalSources.map(source => source.id === duplicateSource.id ? {
-                                ...source,
-                                contractRateAnnual: Number(bankAnnualRate) || source.contractRateAnnual || 0,
-                                cetAnnual: Number(bankCetAnnual) || source.cetAnnual || 0,
-                                importMetadata: confirmedImportMetadata
-                            } : source));
+                            setCapitalSources(capitalSources.map(source => source.id === duplicateSource.id
+                                ? FinanceEngine.mergeImportedBankSource(source, importedSource, confirmedImportMetadata)
+                                : source));
                             setSourceName(''); setSourceType('own'); resetBankFields(); setShowForm(false);
-                            showToast('✅ Dados técnicos do contrato existente atualizados!');
+                            showToast('✅ Contrato existente atualizado com o novo demonstrativo!');
                             return;
                         }
                         setCapitalSources([{
@@ -110,7 +126,14 @@
                             firstDueDate: bankFirstDueDate || bankStartDate,
                             status: 'active', totalPaidToBank: 0, paidInstallments: 0,
                             monthlyReserve: 0, amortizationFund: 0,
-                            officialBalanceSnapshots: [],
+                            nominalInstallmentValue: importDraft?.source?.nominalInstallmentValue || installmentVal,
+                            officialBalanceSnapshots: (importDraft?.source?.officialBalanceSnapshots || []).map(snapshot => ({ ...snapshot })),
+                            projectionMode: importDraft?.source?.projectionMode || 'fixed_installments',
+                            amortizationStrategy: importDraft?.source?.amortizationStrategy || 'last_installments_first',
+                            carryoverEnabled: importDraft?.source?.carryoverEnabled !== false,
+                            monthlyOwnCapitalLimit: null,
+                            scenarioHistory: [],
+                            documentFindings: importDraft?.source?.documentFindings || null,
                             contractNumber: importDraft?.source?.contractNumber || '',
                             installments: bankSchedule.map(item => ({ ...item })),
                             importMetadata: confirmedImportMetadata
@@ -136,7 +159,7 @@
                                     <h3 className="font-bold text-gray-800 text-lg">Nova Origem de Capital</h3>
                                     <button type="button" onClick={() => { setShowForm(false); resetBankFields(); }} className="text-gray-400 hover:text-gray-600 text-sm font-bold">✕</button>
                                 </div>
-                                {importDraft && <div className="mb-4 p-3 rounded-xl bg-purple-50 border border-purple-200 text-xs text-purple-800"><p className="font-bold">📄 Rascunho importado de {importDraft.provider}</p><p className="mt-1">Confira e ajuste os campos abaixo. Nenhuma parcela, pagamento ou saldo foi confirmado pelo PDF.</p>{importDraft.warnings.map(warning => <p key={warning} className="mt-1 text-amber-700">⚠️ {warning}</p>)}</div>}
+                                {importDraft && <div className="mb-4 p-3 rounded-xl bg-purple-50 border border-purple-200 text-xs text-purple-800"><p className="font-bold">Rascunho importado de {importDraft.provider}</p><p className="mt-1">Confira os dados do contrato. Movimentações encontradas no documento não serão lançadas como pagamentos automaticamente.</p>{importDraft.source.documentFindings?.requiresMovementReview && <div className="mt-2 rounded-lg bg-white/80 border border-purple-100 p-2"><p className="font-bold">Revisão do demonstrativo</p><p className="mt-1">{importDraft.source.documentFindings.paidInstallments.length} parcelas normais, {importDraft.source.documentFindings.anticipatedInstallments.length} antecipadas e {importDraft.source.documentFindings.openInstallments.length} abertas detectadas.</p><p className="mt-1">Total pago detectado: {formatMoney(importDraft.source.documentFindings.totalDetectedPaid)}</p></div>}{importDraft.warnings.map(warning => <p key={warning} className="mt-1 text-amber-700">Atenção: {warning}</p>)}</div>}
                                 <div className="flex gap-2 mb-4">
                                     <button data-testid="origens-form-tipo-proprio" type="button" onClick={() => setSourceType('own')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors ${sourceType === 'own' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>💰 Próprio</button>
                                     <button data-testid="origens-form-tipo-banco" type="button" onClick={() => setSourceType('bank')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors ${sourceType === 'bank' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-600'}`}>🏦 Banco</button>

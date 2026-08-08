@@ -9,7 +9,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     'use strict';
 
-    const SCHEMA_VERSION = 2;
+    const SCHEMA_VERSION = 3;
     const EXPORT_TYPE = 'agemp-local-finance-backup';
     const DEFAULT_OWN_SOURCE = Object.freeze({
         id: 'own-default',
@@ -24,9 +24,11 @@
     const CLIENT_PAYMENT_KIND = Object.freeze({
         AUTOMATIC: 'automatic',
         INTEREST_ONLY: 'interest_only',
+        MULTI_MONTH_INTEREST: 'multi_month_interest',
         PRINCIPAL_AMORTIZATION: 'principal_amortization',
         PRINCIPAL_SETTLEMENT: 'principal_settlement',
-        INTEREST_AND_PRINCIPAL_SETTLEMENT: 'interest_and_principal_settlement'
+        INTEREST_AND_PRINCIPAL_SETTLEMENT: 'interest_and_principal_settlement',
+        UNIDENTIFIED: 'unidentified'
     });
 
     const isMissingSourceId = (sourceId) => sourceId === undefined || sourceId === null || sourceId === '';
@@ -130,12 +132,13 @@
             const paymentCents = Math.max(0, toCents(payment.amount));
             const interestDueCents = calculateInterestCents(principalCents, loan?.interestRate);
             const mode = payment.kind || payment.paymentType || CLIENT_PAYMENT_KIND.AUTOMATIC;
+            const unidentified = mode === CLIENT_PAYMENT_KIND.UNIDENTIFIED;
             const principalOnly = mode === CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT || mode === CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION;
-            const interestOnly = mode === CLIENT_PAYMENT_KIND.INTEREST_ONLY;
-            const interestPaidCents = principalOnly ? 0 : Math.min(paymentCents, interestDueCents);
-            const amountAfterInterestCents = interestOnly ? 0 : Math.max(0, paymentCents - interestPaidCents);
-            const principalRecoveredCents = Math.min(principalCents, principalOnly ? paymentCents : amountAfterInterestCents);
-            const unallocatedCents = Math.max(0, amountAfterInterestCents - principalRecoveredCents);
+            const interestOnly = mode === CLIENT_PAYMENT_KIND.INTEREST_ONLY || mode === CLIENT_PAYMENT_KIND.MULTI_MONTH_INTEREST;
+            const interestPaidCents = unidentified ? 0 : (principalOnly ? 0 : (interestOnly ? paymentCents : Math.min(paymentCents, interestDueCents)));
+            const amountAfterInterestCents = unidentified || interestOnly ? 0 : Math.max(0, paymentCents - interestPaidCents);
+            const principalRecoveredCents = unidentified ? 0 : Math.min(principalCents, principalOnly ? paymentCents : amountAfterInterestCents);
+            const unallocatedCents = unidentified ? paymentCents : Math.max(0, amountAfterInterestCents - principalRecoveredCents);
 
             principalCents -= principalRecoveredCents;
             totalInterestReceivedCents += interestPaidCents;
@@ -147,6 +150,9 @@
                 kind: mode,
                 amount: fromCents(paymentCents),
                 interestPaid: fromCents(interestPaidCents),
+                coveredInterestMonths: interestOnly && interestDueCents > 0
+                    ? Number((interestPaidCents / interestDueCents).toFixed(2))
+                    : (interestPaidCents > 0 ? 1 : 0),
                 amortized: fromCents(principalRecoveredCents),
                 unallocated: fromCents(unallocatedCents),
                 balanceAfter: fromCents(principalCents),
@@ -408,8 +414,11 @@
             return {
                 number,
                 dueDate: installment.dueDate || getInstallmentDueDate(bank.firstDueDate, number),
-                amount: fromCents(toCents(installment.amount === undefined ? bank.installmentValue : installment.amount)),
-                status
+                amount: fromCents(toCents(installment.nominalAmount ?? installment.amount ?? bank.nominalInstallmentValue ?? bank.installmentValue)),
+                nominalAmount: fromCents(toCents(installment.nominalAmount ?? bank.nominalInstallmentValue ?? bank.installmentValue ?? installment.amount)),
+                presentValue: installment.presentValue === undefined ? null : fromCents(toCents(installment.presentValue)),
+                status,
+                quality: installment.quality || (installment.presentValue === undefined ? 'confirmed' : 'recalculated')
             };
         });
     };
@@ -479,7 +488,7 @@
 
         const bankRemainingNumbers = [...bankRemainingSet].sort((left, right) => left - right);
         const accountingRemainingNumbers = [...accountingRemainingSet].sort((left, right) => left - right);
-        const installmentValueCents = toCents(bank.installmentValue);
+        const installmentValueCents = toCents(bank.nominalInstallmentValue ?? bank.installmentValue);
         const totalCashPaidCents = relatedPayments
             .filter(payment => payment.status !== BANK_PAYMENT_STATUS.SCHEDULED)
             .reduce((total, payment) => total + toCents(payment.amount), 0);
@@ -913,6 +922,77 @@
         };
     };
 
+    const normalizedBankIdentity = value => String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
+
+    const findMatchingBankSource = (capitalSources = [], importedSource = {}) => {
+        const banks = capitalSources.filter(source => source?.type === 'bank');
+        const importedContract = String(importedSource.contractNumber || '').trim().toLowerCase();
+        if (importedContract) {
+            const exactContract = banks.find(source => String(source.contractNumber || '').trim().toLowerCase() === importedContract);
+            if (exactContract) return exactContract;
+        }
+
+        const importedIdentity = normalizedBankIdentity(importedSource.importMetadata?.provider || importedSource.name);
+        if (!importedIdentity) return null;
+        const candidates = banks.filter(source => {
+            const sourceIdentity = normalizedBankIdentity(source.importMetadata?.provider || source.name);
+            if (sourceIdentity !== importedIdentity) return false;
+            const anchors = [
+                toCents(source.receivedAmount) === toCents(importedSource.receivedAmount),
+                Number(source.totalInstallments || 0) === Number(importedSource.totalInstallments || 0),
+                Boolean(source.startDate && importedSource.startDate && source.startDate === importedSource.startDate)
+            ];
+            return anchors.filter(Boolean).length >= 2;
+        });
+        return candidates.length === 1 ? candidates[0] : null;
+    };
+
+    const mergeImportedBankSource = (existingSource, importedSource, importMetadata) => {
+        if (!existingSource || !importedSource) return existingSource || importedSource || null;
+        const snapshotsByDate = new Map();
+        [...(existingSource.officialBalanceSnapshots || []), ...(importedSource.officialBalanceSnapshots || [])].forEach(snapshot => {
+            if (!snapshot) return;
+            const key = snapshot.date || snapshot.id || `snapshot-${snapshotsByDate.size}`;
+            snapshotsByDate.set(key, {
+                ...snapshot,
+                id: snapshot.id || (snapshot.date ? `official-${snapshot.date}` : undefined)
+            });
+        });
+
+        return {
+            ...existingSource,
+            receivedAmount: importedSource.receivedAmount ?? existingSource.receivedAmount,
+            financedAmount: importedSource.financedAmount ?? existingSource.financedAmount,
+            monthlyRate: importedSource.monthlyRate ?? existingSource.monthlyRate,
+            contractRateMonthly: importedSource.contractRateMonthly ?? existingSource.contractRateMonthly,
+            contractRateAnnual: importedSource.contractRateAnnual ?? existingSource.contractRateAnnual,
+            cetMonthly: importedSource.cetMonthly ?? existingSource.cetMonthly,
+            cetAnnual: importedSource.cetAnnual ?? existingSource.cetAnnual,
+            totalInstallments: importedSource.totalInstallments ?? existingSource.totalInstallments,
+            installmentValue: importedSource.installmentValue ?? existingSource.installmentValue,
+            nominalInstallmentValue: importedSource.nominalInstallmentValue ?? importedSource.installmentValue ?? existingSource.nominalInstallmentValue ?? existingSource.installmentValue,
+            totalToPay: importedSource.totalToPay ?? existingSource.totalToPay,
+            additionalFees: importedSource.additionalFees ?? existingSource.additionalFees,
+            iofAmount: importedSource.iofAmount ?? existingSource.iofAmount,
+            startDate: importedSource.startDate || existingSource.startDate,
+            firstDueDate: importedSource.firstDueDate || existingSource.firstDueDate,
+            contractNumber: importedSource.contractNumber || existingSource.contractNumber || '',
+            installments: Array.isArray(importedSource.installments) && importedSource.installments.length > 0
+                ? importedSource.installments.map(item => ({ ...item }))
+                : (existingSource.installments || []).map(item => ({ ...item })),
+            officialBalanceSnapshots: [...snapshotsByDate.values()].sort((left, right) => compareIsoDates(left.date, right.date)),
+            projectionMode: importedSource.projectionMode || existingSource.projectionMode,
+            amortizationStrategy: importedSource.amortizationStrategy || existingSource.amortizationStrategy || 'last_installments_first',
+            carryoverEnabled: importedSource.carryoverEnabled !== false && existingSource.carryoverEnabled !== false,
+            documentFindings: importedSource.documentFindings || existingSource.documentFindings || null,
+            importMetadata: importMetadata || importedSource.importMetadata || existingSource.importMetadata
+        };
+    };
+
     const migrateData = (rawData) => {
         const raw = rawData && typeof rawData === 'object' ? rawData : {};
         const sourceInput = Array.isArray(raw.capitalSources) && raw.capitalSources.length > 0
@@ -938,6 +1018,7 @@
                     monthlyRate: Number(source.monthlyRate || 0),
                     totalInstallments,
                     installmentValue,
+                    nominalInstallmentValue: fromCents(toCents(source.nominalInstallmentValue ?? installmentValue)),
                     totalToPay: source.totalToPay === undefined
                         ? calculatedTotal
                         : fromCents(toCents(source.totalToPay)),
@@ -958,13 +1039,25 @@
                     installments: (source.installments || []).map(item => ({
                         ...item,
                         number: Number(item.number),
-                        amount: fromCents(toCents(item.amount)),
+                        amount: fromCents(toCents(item.nominalAmount ?? item.amount ?? source.nominalInstallmentValue ?? installmentValue)),
+                        nominalAmount: fromCents(toCents(item.nominalAmount ?? source.nominalInstallmentValue ?? installmentValue ?? item.amount)),
+                        presentValue: item.presentValue === undefined ? undefined : fromCents(toCents(item.presentValue)),
                         dueDate: item.dueDate || null
                     })),
                     officialBalanceSnapshots: (source.officialBalanceSnapshots || []).map(snapshot => ({
                         ...snapshot,
-                        amount: fromCents(toCents(snapshot.amount))
-                    }))
+                        amount: fromCents(toCents(snapshot.amount)),
+                        presentValues: (snapshot.presentValues || []).map(item => ({
+                            ...item,
+                            number: Number(item.number),
+                            amount: fromCents(toCents(item.amount))
+                        }))
+                    })),
+                    projectionMode: source.projectionMode || (/santander/i.test(`${source.name || ''} ${source.importMetadata?.provider || ''}`) ? 'discounted_last_installments' : 'fixed_installments'),
+                    amortizationStrategy: source.amortizationStrategy || 'last_installments_first',
+                    carryoverEnabled: source.carryoverEnabled !== false,
+                    monthlyOwnCapitalLimit: source.monthlyOwnCapitalLimit === undefined || source.monthlyOwnCapitalLimit === null ? null : fromCents(toCents(source.monthlyOwnCapitalLimit)),
+                    scenarioHistory: Array.isArray(source.scenarioHistory) ? source.scenarioHistory : []
                 };
             })
             : [{ ...DEFAULT_OWN_SOURCE }];
@@ -1010,6 +1103,11 @@
                     amount: fromCents(toCents(loan.amount)),
                     interestRate: Number(loan.interestRate ?? 10),
                     sourceId: isMissingSourceId(loan.sourceId) ? defaultOwnId : loan.sourceId,
+                    firstInterestDueDate: loan.firstInterestDueDate || null,
+                    periodicityMonths: Math.max(1, Number(loan.periodicityMonths || 1)),
+                    status: loan.status || (calculateLoan(loan).currentPrincipal <= 0 ? 'paid_off' : 'active'),
+                    closedAt: loan.closedAt || null,
+                    projectionEnabled: loan.projectionEnabled !== false,
                     payments: (loan.payments || []).map(payment => ({
                         ...payment,
                         amount: fromCents(toCents(payment.amount)),
@@ -1147,6 +1245,11 @@
                 if (!knownSourceIds.has(loan.sourceId)) {
                     issues.push({ type: 'orphan-loan', id: loan.id, sourceId: loan.sourceId });
                 }
+                (loan.payments || []).forEach(payment => {
+                    if ((payment.kind || payment.paymentType) === CLIENT_PAYMENT_KIND.UNIDENTIFIED) {
+                        issues.push({ type: 'unidentified-client-payment', id: payment.id, loanId: loan.id, clientId: client.id });
+                    }
+                });
             });
         });
 
@@ -1298,6 +1401,8 @@
         calculateOperationRecovery,
         getBankOperationLinks,
         calculateGlobalStats,
+        findMatchingBankSource,
+        mergeImportedBankSource,
         migrateData,
         createBackup,
         findIntegrityIssues,

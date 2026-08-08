@@ -28,9 +28,11 @@
 
                 const paymentKindLabel = (kind) => ({
                     [FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY]: 'Somente juros',
+                    [FinanceEngine.CLIENT_PAYMENT_KIND.MULTI_MONTH_INTEREST]: 'Juros de vários meses',
                     [FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION]: 'Amortização do principal',
                     [FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT]: 'Quitação do principal',
                     [FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_AND_PRINCIPAL_SETTLEMENT]: 'Juros + quitação total',
+                    [FinanceEngine.CLIENT_PAYMENT_KIND.UNIDENTIFIED]: 'Não identificado — revisar',
                     [FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC]: 'Pagamento comum'
                 }[kind || FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC]);
 
@@ -435,16 +437,20 @@
                                                         <select value={paymentKind} onChange={e => setPaymentKind(e.target.value)} className="w-full mb-2 p-2 border rounded-lg bg-gray-50 text-sm">
                                                             <option value={FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC}>Pagamento comum (juros primeiro)</option>
                                                             <option value={FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY}>Somente juros — principal não diminui</option>
+                                                            <option value={FinanceEngine.CLIENT_PAYMENT_KIND.MULTI_MONTH_INTEREST}>Juros de vários meses — principal não diminui</option>
                                                             <option value={FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION}>Amortização parcial do principal</option>
                                                             <option value={FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT}>Quitação somente do principal</option>
                                                             <option value={FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_AND_PRINCIPAL_SETTLEMENT}>Juros + quitação total</option>
+                                                            <option value={FinanceEngine.CLIENT_PAYMENT_KIND.UNIDENTIFIED}>Não identificado — deixar para revisão</option>
                                                         </select>
                                                         <p className="text-[10px] text-gray-500 mb-3">
                                                             {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY && 'Registra só os juros deste mês.'}
+                                                            {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.MULTI_MONTH_INTEREST && 'Registra todo o valor como juros e calcula quantos meses ele cobre.'}
                                                             {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION && 'Abate diretamente o valor emprestado, sem cobrar juros neste lançamento.'}
                                                             {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT && 'Use quando o cliente devolver somente o principal em aberto.'}
                                                             {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_AND_PRINCIPAL_SETTLEMENT && 'Use quando ele pagar os juros do mês e devolver todo o principal juntos.'}
                                                             {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC && 'O valor cobre primeiro os juros e o restante abate o principal.'}
+                                                            {paymentKind === FinanceEngine.CLIENT_PAYMENT_KIND.UNIDENTIFIED && 'Preserva o valor sem classificá-lo como juros ou principal até a revisão.'}
                                                         </p>
                                                         <div className="flex gap-2 mb-3">
                                                             <input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} required className="w-1/3 p-2 border rounded-lg bg-gray-50 text-sm" />
@@ -474,9 +480,11 @@
                                                                     <select value={editingPayment.kind || FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC} onChange={e => setEditingPayment({...editingPayment, kind: e.target.value})} className="w-full mb-2 p-1 border rounded text-xs">
                                                                         <option value={FinanceEngine.CLIENT_PAYMENT_KIND.AUTOMATIC}>Pagamento comum</option>
                                                                         <option value={FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_ONLY}>Somente juros</option>
+                                                                        <option value={FinanceEngine.CLIENT_PAYMENT_KIND.MULTI_MONTH_INTEREST}>Juros de vários meses</option>
                                                                         <option value={FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_AMORTIZATION}>Amortização do principal</option>
                                                                         <option value={FinanceEngine.CLIENT_PAYMENT_KIND.PRINCIPAL_SETTLEMENT}>Quitação do principal</option>
                                                                         <option value={FinanceEngine.CLIENT_PAYMENT_KIND.INTEREST_AND_PRINCIPAL_SETTLEMENT}>Juros + quitação total</option>
+                                                                        <option value={FinanceEngine.CLIENT_PAYMENT_KIND.UNIDENTIFIED}>Não identificado — revisar</option>
                                                                     </select>
                                                                     <div className="flex gap-2">
                                                                         <button type="button" onClick={() => setEditingPayment(null)} className="flex-1 bg-gray-200 rounded text-[10px] font-bold py-1">Cancelar</button>
