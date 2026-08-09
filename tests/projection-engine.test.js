@@ -71,6 +71,30 @@ RESUMO`);
     assert.equal(draft.source.documentFindings.requiresMovementReview, true);
 });
 
+test('importa todas as parcelas Santander quando o leitor agrupa páginas inteiras em uma linha', () => {
+    const settledRows = [1, 2, ...Array.from({ length: 22 }, (_, index) => index + 40)].map(number =>
+        `${number} 05/07/2026 06/07/2026 302,47 297,32 5,15 302,47 0,00 0,00 0,00 302,47 1,5268 0,00 Liquidação Desconto em folha`
+    ).join(' ');
+    const openRows = Array.from({ length: 37 }, (_, index) => index + 3).map(number =>
+        `${number} ${number === 39 ? '05/09/2029' : '05/09/2026'} 297,92 288,15 9,77 297,92 0,00 0,00 0,00 0,00 1,5268 297,92 Em aberto Desconto em folha`
+    ).join(' ');
+    const draft = BankDocumentImporter.parseSantander(`Banco Santander (Brasil) S.A.
+Documento Descritivo de Crédito Nr. Contrato: 796465673 Data Emissão DDC: 06/08/2026 Dt. Formalização: 01/06/2026
+Valor Solicitado: 11.500,00 Vlr. Financiado: 11.854,41 Dívida para Liquidação: 8.472,78 Em: 06/08/2026
+IOF: 354,41 Dt. 1º Vcto: 05/07/2026 Nr. Parcelas: 61
+Custo Efet Total CET: 1,67 % a.m. 21,92 % a.a. Tx. Efet. do contrato: 1,5268 % a.m. 19,9419 % a.a.
+Movimentações Efetuadas ${settledRows}
+PARCELAS A VENCER ${openRows}
+RESUMO`);
+
+    assert.deepEqual(draft.source.documentFindings.paidInstallments.map(item => item.number), [1, 2]);
+    assert.deepEqual(draft.source.documentFindings.anticipatedInstallments.map(item => item.number), Array.from({ length: 22 }, (_, index) => index + 40));
+    assert.equal(draft.source.documentFindings.openInstallments.length, 37);
+    assert.deepEqual(draft.source.officialBalanceSnapshots[0].remainingInstallmentNumbers, Array.from({ length: 37 }, (_, index) => index + 3));
+    assert.equal(draft.source.installments.find(item => item.number === 3).dueDate, '2026-09-05');
+    assert.equal(draft.source.installments.find(item => item.number === 39).dueDate, '2029-09-05');
+});
+
 test('projeta o Santander pelo saldo oficial e reproduz a liquidação de referência', () => {
     const santander = {
         id: 'bank-santander', type: 'bank', name: 'Santander', receivedAmount: 11500,

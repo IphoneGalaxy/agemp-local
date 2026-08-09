@@ -83,24 +83,32 @@
         });
     };
 
-    const parseSantanderTableRows = (section, status, nominalFallback) => String(section || '').split(/\r?\n/).map(line => {
-        const row = /^\s*(\d+)\s+(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}\/\d{2}\/\d{4}))?\s+((?:[\d.]+,\d{2}\s+){3,12})/.exec(line);
-        if (!row) return null;
-        const values = [...row[4].matchAll(/[\d.]+,\d{2}/g)].map(match => money(match[0]));
-        if (values.length < 3) return null;
-        const hasPaymentDate = Boolean(row[3]);
-        const nominalAmount = hasPaymentDate ? values[0] : Number(nominalFallback || 0);
-        const presentValue = hasPaymentDate ? values[3] : values[0];
-        return {
-            number: Number(row[1]), dueDate: isoDate(row[2]), paymentDate: isoDate(row[3]),
-            amount: nominalAmount || values[0], nominalAmount: nominalAmount || values[0], presentValue,
-            principalPresentValue: values[1], interestPresentValue: values[2],
-            discountAmount: hasPaymentDate ? (values[6] || 0) : 0,
-            totalPaid: hasPaymentDate ? (values[7] || presentValue) : 0,
-            documentStatus: status,
-            quality: status === 'open' ? 'recalculated' : 'confirmed'
-        };
-    }).filter(Boolean);
+    const parseSantanderTableRows = (section, status, nominalFallback) => {
+        const table = String(section || '');
+        const rowPattern = /(?:^|\s)(\d{1,3})\s+(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}\/\d{2}\/\d{4}))?\s+/g;
+        const rowStarts = [...table.matchAll(rowPattern)];
+        const parsedRows = rowStarts.map((row, index) => {
+            const nextRow = rowStarts[index + 1];
+            const rowBody = table.slice(row.index + row[0].length, nextRow?.index ?? table.length);
+            // A taxa do contrato possui quatro casas decimais (1,5268) e não é
+            // uma coluna monetária. O lookahead impede que ela vire 1,52.
+            const values = [...rowBody.matchAll(/[\d.]+,\d{2}(?!\d)/g)].map(match => money(match[0]));
+            if (values.length < 3) return null;
+            const hasPaymentDate = Boolean(row[3]);
+            const nominalAmount = hasPaymentDate ? values[0] : Number(nominalFallback || 0);
+            const presentValue = hasPaymentDate ? values[3] : values[0];
+            return {
+                number: Number(row[1]), dueDate: isoDate(row[2]), paymentDate: isoDate(row[3]),
+                amount: nominalAmount || values[0], nominalAmount: nominalAmount || values[0], presentValue,
+                principalPresentValue: values[1], interestPresentValue: values[2],
+                discountAmount: hasPaymentDate ? (values[6] || 0) : 0,
+                totalPaid: hasPaymentDate ? (values[7] || presentValue) : 0,
+                documentStatus: status,
+                quality: status === 'open' ? 'recalculated' : 'confirmed'
+            };
+        }).filter(Boolean);
+        return parsedRows.filter((row, index, all) => all.findIndex(item => item.number === row.number) === index);
+    };
 
     const parseSantander = (text) => {
         const normalized = normalizeText(text);
