@@ -310,14 +310,24 @@
                 if (!encryptedImportPending || !backupPasswordInput) return;
                 setBackupPasswordError('');
 
+                const cleanKey = (typeof LocalAuth !== 'undefined' && LocalAuth.normalizeKey)
+                    ? LocalAuth.normalizeKey(backupPasswordInput)
+                    : backupPasswordInput.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+                if (cleanKey.length !== 16) {
+                    setBackupPasswordError('A Chave de Recuperação deve conter exatamente 16 caracteres (ex: ABCD-1234-EFGH-5678).');
+                    return;
+                }
+
                 try {
-                    const result = await LocalAuth.decryptBackup(encryptedImportPending.parsedFile, backupPasswordInput);
+                    const result = await LocalAuth.decryptBackup(encryptedImportPending.parsedFile, cleanKey);
                     const pending = encryptedImportPending;
                     setEncryptedImportPending(null);
                     setBackupPasswordInput('');
+                    setBackupPasswordError('');
                     processParsedBackupData(result.data, { isEncrypted: true, sameVault: false });
                 } catch (err) {
-                    setBackupPasswordError('Senha mestra ou chave de recuperação incorreta para este backup.');
+                    setBackupPasswordError('Chave de recuperação incorreta para este backup.');
                 }
             };
 
@@ -629,12 +639,12 @@
                                     </div>
                                     <div>
                                         <h3 className="font-bold text-gray-900 text-base">Backup Protegido</h3>
-                                        <p className="text-xs text-gray-500">Arquivo criptografado</p>
+                                        <p className="text-xs text-gray-500">Criptografado com Chave de Recuperação</p>
                                     </div>
                                 </div>
 
                                 <p className="text-xs text-gray-600 leading-relaxed">
-                                    Cole a sua <strong>Chave de Recuperação de 16 caracteres</strong> (ou digite a senha mestra) usada na criação deste backup:
+                                    Por segurança máxima, este backup só pode ser liberado com a <strong>Chave de Recuperação de 16 caracteres</strong> da conta de origem:
                                 </p>
 
                                 <form onSubmit={handleDecryptExternalBackup} className="space-y-3">
@@ -643,7 +653,7 @@
                                             type={showBackupPassword ? "text" : "password"}
                                             value={backupPasswordInput}
                                             onChange={(e) => setBackupPasswordInput(e.target.value)}
-                                            placeholder="Cole a Chave de Recuperação ou Senha"
+                                            placeholder="Ex: ABCD-1234-EFGH-5678"
                                             className="w-full pl-3.5 pr-10 py-2.5 border border-gray-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono"
                                             autoFocus
                                         />
