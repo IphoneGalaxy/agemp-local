@@ -310,22 +310,32 @@
                 if (!encryptedImportPending || !backupPasswordInput) return;
                 setBackupPasswordError('');
 
+                const rawInput = backupPasswordInput.trim();
                 const cleanKey = (typeof LocalAuth !== 'undefined' && LocalAuth.normalizeKey)
-                    ? LocalAuth.normalizeKey(backupPasswordInput)
-                    : backupPasswordInput.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-
-                if (cleanKey.length !== 16) {
-                    setBackupPasswordError('A Chave de Recuperação deve conter exatamente 16 caracteres (ex: ABCD-1234-EFGH-5678).');
-                    return;
-                }
+                    ? LocalAuth.normalizeKey(rawInput)
+                    : rawInput.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
                 try {
-                    const result = await LocalAuth.decryptBackup(encryptedImportPending.parsedFile, cleanKey);
-                    const pending = encryptedImportPending;
-                    setEncryptedImportPending(null);
-                    setBackupPasswordInput('');
-                    setBackupPasswordError('');
-                    processParsedBackupData(result.data, { isEncrypted: true, sameVault: false });
+                    // Tenta primeiro com a Chave de Recuperação normalizada
+                    let result = null;
+                    try {
+                        result = await LocalAuth.decryptBackup(encryptedImportPending.parsedFile, cleanKey.length === 16 ? cleanKey : rawInput);
+                    } catch (primaryErr) {
+                        // Se falhar e cleanKey for diferente de rawInput, tenta com rawInput
+                        if (cleanKey !== rawInput) {
+                            result = await LocalAuth.decryptBackup(encryptedImportPending.parsedFile, rawInput);
+                        } else {
+                            throw primaryErr;
+                        }
+                    }
+
+                    if (result && result.data) {
+                        const pending = encryptedImportPending;
+                        setEncryptedImportPending(null);
+                        setBackupPasswordInput('');
+                        setBackupPasswordError('');
+                        processParsedBackupData(result.data, { isEncrypted: true, sameVault: false });
+                    }
                 } catch (err) {
                     setBackupPasswordError('Chave de recuperação incorreta para este backup.');
                 }
