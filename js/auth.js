@@ -136,6 +136,10 @@
         return `PUB-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}`;
     }
 
+    function generatePublicKey() {
+        return generatePublicKeyFallback();
+    }
+
     // Retorna a Chave Pública da conta atual (gerando e salvando caso seja uma conta existente sem chave)
     function getPublicKey() {
         const auth = getStoredAuth();
