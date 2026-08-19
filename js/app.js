@@ -51,8 +51,6 @@
                             const safetyKey = 'loanManagerDataBackupBeforeV3';
                             if (!SecureStorage.getItem(safetyKey)) SecureStorage.setItem(safetyKey, savedData);
                         }
-                    } else if (window.INITIAL_BACKUP_DATA) {
-                        parsed = window.INITIAL_BACKUP_DATA;
                     }
 
                     const migrated = FinanceEngine.migrateData(parsed);
@@ -63,15 +61,13 @@
                     setHistoricalInterestAllocations(migrated.historicalInterestAllocations || []);
                     setSuppliers(migrated.suppliers || []);
                 } catch (error) {
-                    const fallbackData = window.INITIAL_BACKUP_DATA || {};
-                    const emptyData = FinanceEngine.migrateData(fallbackData);
+                    const emptyData = FinanceEngine.migrateData({});
                     setFundsTransactions(emptyData.fundsTransactions || []);
                     setClients(emptyData.clients || []);
                     setCapitalSources(emptyData.capitalSources || []);
                     setBankPayments(emptyData.bankPayments || []);
                     setHistoricalInterestAllocations(emptyData.historicalInterestAllocations || []);
                     setSuppliers(emptyData.suppliers || []);
-                    showToast('❌ Não foi possível carregar os dados salvos. Backup padrão restaurado.');
                 } finally {
                     setIsHydrated(true);
                 }

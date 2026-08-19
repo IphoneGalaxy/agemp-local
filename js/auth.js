@@ -168,9 +168,9 @@
         const passwordHash = await pbkdf2Hash(password, salt);
         const recoveryHash = await pbkdf2Hash(cleanRecovery, recoverySalt);
         
-        // Chave pública e cofre vinculados deterministicamente à Chave de Recuperação
-        const publicKey = existingPublicKey || (await derivePublicKeyFromRecoveryKey(cleanRecovery));
-        const vaultId = existingVaultId || (await deriveVaultIdFromRecoveryKey(cleanRecovery));
+        // Chave pública e cofre vinculados deterministicamente e unicamente à Chave de Recuperação
+        const publicKey = await derivePublicKeyFromRecoveryKey(cleanRecovery);
+        const vaultId = await deriveVaultIdFromRecoveryKey(cleanRecovery);
 
         const authData = {
             hasPassword: true,
