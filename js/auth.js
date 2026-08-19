@@ -104,8 +104,32 @@
         return Boolean(auth && auth.passwordHash && auth.salt);
     }
 
-    // Gera uma Chave Pública legível e exclusiva da conta (PUB-XXXX-XXXX-XXXX-XXXX)
-    function generatePublicKey() {
+    // Gera uma Chave Pública legível e determinística a partir da Chave de Recuperação
+    async function derivePublicKeyFromRecoveryKey(recoveryKey) {
+        const cleanKey = normalizeKey(recoveryKey);
+        if (!cleanKey) return generatePublicKeyFallback();
+        const enc = new TextEncoder();
+        const hashBuffer = await crypto.subtle.digest(
+            'SHA-256',
+            enc.encode(`${cleanKey}_FINANCAS_PRO_PUBLIC_KEY_SEED_V1`)
+        );
+        const hex = bufferToHex(hashBuffer).toUpperCase();
+        return `PUB-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}`;
+    }
+
+    // Gera um VaultId determinístico a partir da Chave de Recuperação
+    async function deriveVaultIdFromRecoveryKey(recoveryKey) {
+        const cleanKey = normalizeKey(recoveryKey);
+        if (!cleanKey) return generateSalt(16);
+        const enc = new TextEncoder();
+        const hashBuffer = await crypto.subtle.digest(
+            'SHA-256',
+            enc.encode(`${cleanKey}_FINANCAS_PRO_VAULT_SEED_V1`)
+        );
+        return bufferToHex(hashBuffer).slice(0, 32);
+    }
+
+    function generatePublicKeyFallback() {
         const bytes = new Uint8Array(8);
         crypto.getRandomValues(bytes);
         const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
@@ -118,20 +142,20 @@
         if (!auth || !auth.hasPassword) return null;
         if (auth.publicKey) return auth.publicKey;
         // Auto-gera e persiste para contas existentes
-        const newPubKey = generatePublicKey();
+        const newPubKey = generatePublicKeyFallback();
         auth.publicKey = newPubKey;
         saveStoredAuth(auth);
         return newPubKey;
     }
 
     // Configura a Senha Mestra inicial e vincula à Chave de Recuperação
-    async function setupMasterPassword(password, recoveryKey) {
+    async function setupMasterPassword(password, recoveryKey, existingPublicKey = null, existingVaultId = null) {
         if (!password || password.length < 4) {
             throw new Error('A senha deve conter no mínimo 4 caracteres.');
         }
         const cleanRecovery = normalizeKey(recoveryKey);
         if (!cleanRecovery || cleanRecovery.length < 16) {
-            throw new Error('Chave de recuperação inválida.');
+            throw new Error('Chave de recuperação inválida (deve conter 16 caracteres).');
         }
 
         const salt = generateSalt(16);
@@ -139,11 +163,14 @@
 
         const passwordHash = await pbkdf2Hash(password, salt);
         const recoveryHash = await pbkdf2Hash(cleanRecovery, recoverySalt);
-        const publicKey = generatePublicKey();
+        
+        // Chave pública e cofre vinculados deterministicamente à Chave de Recuperação
+        const publicKey = existingPublicKey || (await derivePublicKeyFromRecoveryKey(cleanRecovery));
+        const vaultId = existingVaultId || (await deriveVaultIdFromRecoveryKey(cleanRecovery));
 
         const authData = {
             hasPassword: true,
-            vaultId: generateSalt(16),
+            vaultId: vaultId,
             publicKey: publicKey,
             passwordHash,
             salt,
@@ -155,7 +182,7 @@
 
         saveStoredAuth(authData);
         setSessionActive(true);
-        return true;
+        return { success: true, publicKey, vaultId };
     }
 
     // Valida a Senha Mestra digitada
@@ -219,13 +246,23 @@
         if (!isCurrentValid) {
             throw new Error('A senha atual está incorreta.');
         }
+        if (!newPassword || newPassword.length < 4) {
+            throw new Error('A nova senha deve ter no mínimo 4 caracteres.');
+        }
         const auth = getStoredAuth();
-        const newRecoveryKey = generateRecoveryKey();
-        await setupMasterPassword(newPassword, newRecoveryKey);
-        return { success: true, newRecoveryKey };
+        if (!auth) {
+            throw new Error('Nenhuma conta encontrada.');
+        }
+        const salt = generateSalt(16);
+        const newPasswordHash = await pbkdf2Hash(newPassword, salt);
+        auth.passwordHash = newPasswordHash;
+        auth.salt = salt;
+        auth.updatedAt = new Date().toISOString();
+        saveStoredAuth(auth);
+        return { success: true };
     }
 
-    // --- CRIPTOGRAFIA DE BACKUP (AES-GCM 256-BIT ATRELADO À CONTA) ---
+    // --- CRIPTOGRAFIA DE BACKUP (AES-GCM 256-BIT COM DUPLO DESBLOQUEIO: SENHA OU CHAVE DE RECUPERAÇÃO) ---
     async function getAesKeyFromHash(hashHex) {
         const keyBuffer = hexToBuffer(hashHex);
         return await crypto.subtle.importKey(
@@ -242,26 +279,67 @@
         if (!auth || !auth.passwordHash) {
             return plainDataObject;
         }
+
+        // Gera chave AES de dados aleatória de 256 bits
+        const dataKeyBytes = new Uint8Array(32);
+        crypto.getRandomValues(dataKeyBytes);
+        const dataKeyHex = bufferToHex(dataKeyBytes);
+        const dataAesKey = await getAesKeyFromHash(dataKeyHex);
+
+        // Criptografa os dados com a dataKey
         const iv = new Uint8Array(12);
         crypto.getRandomValues(iv);
-        const aesKey = await getAesKeyFromHash(auth.passwordHash);
         const enc = new TextEncoder();
         const encoded = enc.encode(JSON.stringify(plainDataObject));
 
         const ciphertext = await crypto.subtle.encrypt(
             { name: 'AES-GCM', iv: iv },
-            aesKey,
+            dataAesKey,
             encoded
         );
 
+        // Envelopa a dataKey com a Senha Mestra (passwordHash)
+        const ivPass = new Uint8Array(12);
+        crypto.getRandomValues(ivPass);
+        const passAesKey = await getAesKeyFromHash(auth.passwordHash);
+        const encDataKeyWithPass = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv: ivPass },
+            passAesKey,
+            dataKeyBytes
+        );
+
+        // Envelopa a dataKey com a Chave de Recuperação (se disponível na conta ativa)
+        let recoveryEnvelope = null;
+        if (auth.recoveryHash) {
+            const ivRec = new Uint8Array(12);
+            crypto.getRandomValues(ivRec);
+            const recAesKey = await getAesKeyFromHash(auth.recoveryHash);
+            const encDataKeyWithRec = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: ivRec },
+                recAesKey,
+                dataKeyBytes
+            );
+            recoveryEnvelope = {
+                iv: bufferToHex(ivRec),
+                key: bufferToHex(encDataKeyWithRec)
+            };
+        }
+
         return {
             _format: 'FINANCAS_PRO_ENCRYPTED_VAULT_V1',
+            version: 2,
             vaultId: auth.vaultId || auth.salt,
             publicKey: getPublicKey(),
             salt: auth.salt,
+            recoverySalt: auth.recoverySalt || null,
             createdAt: new Date().toISOString(),
             iv: bufferToHex(iv),
-            payload: bufferToHex(ciphertext)
+            payload: bufferToHex(ciphertext),
+            envelopePassword: {
+                iv: bufferToHex(ivPass),
+                key: bufferToHex(encDataKeyWithPass)
+            },
+            envelopeRecovery: recoveryEnvelope
         };
     }
 
@@ -274,47 +352,142 @@
         }
 
         const auth = getStoredAuth();
-        let targetHash = auth ? auth.passwordHash : null;
-        let targetSalt = backupObj.salt || (auth ? auth.salt : null);
+        const targetSalt = backupObj.salt || (auth ? auth.salt : null);
+        const targetRecoverySalt = backupObj.recoverySalt || (auth ? auth.recoverySalt : null);
+
+        // Lista de possíveis hashes para tentar descriptografar
+        const candidates = [];
 
         if (overridePassword) {
-            if (!targetSalt) throw new Error('Parâmetros de criptografia ausentes no arquivo.');
-            // Testa se o overridePassword é chave de recuperação ou senha
-            const cleanKey = normalizeKey(overridePassword);
-            if (cleanKey.length === 16) {
-                targetHash = await pbkdf2Hash(cleanKey, targetSalt);
-            } else {
-                targetHash = await pbkdf2Hash(overridePassword, targetSalt);
+            const rawInput = String(overridePassword).trim();
+            const cleanKey = normalizeKey(rawInput);
+
+            // 1. Tentar como senha mestra direta com targetSalt
+            if (targetSalt) {
+                const passHash = await pbkdf2Hash(rawInput, targetSalt);
+                candidates.push({ hash: passHash, type: 'password' });
             }
+
+            // 2. Se tiver 16 caracteres, tentar como chave de recuperação
+            if (cleanKey.length === 16) {
+                if (targetRecoverySalt) {
+                    const recHash = await pbkdf2Hash(cleanKey, targetRecoverySalt);
+                    candidates.push({ hash: recHash, type: 'recovery' });
+                }
+                if (targetSalt) {
+                    const recSaltHash = await pbkdf2Hash(cleanKey, targetSalt);
+                    candidates.push({ hash: recSaltHash, type: 'recovery_salt' });
+                }
+            }
+        } else if (auth && auth.passwordHash) {
+            candidates.push({ hash: auth.passwordHash, type: 'session_pass' });
+            if (auth.recoveryHash) candidates.push({ hash: auth.recoveryHash, type: 'session_rec' });
         }
 
-        if (!targetHash) {
+        if (candidates.length === 0) {
             throw new Error('NEEDS_PASSWORD_AUTH');
         }
 
-        try {
-            const aesKey = await getAesKeyFromHash(targetHash);
-            const iv = hexToBuffer(backupObj.iv);
-            const ciphertext = hexToBuffer(backupObj.payload);
+        // Tenta descriptografar usando os envelopes V2 ou método direto V1
+        for (const cand of candidates) {
+            try {
+                let dataAesKey = null;
 
-            const decryptedBuffer = await crypto.subtle.decrypt(
-                { name: 'AES-GCM', iv: iv },
-                aesKey,
-                ciphertext
-            );
+                // Se o backup tiver envelopes V2
+                if (backupObj.envelopePassword && cand.type !== 'recovery' && cand.type !== 'recovery_salt') {
+                    try {
+                        const passAesKey = await getAesKeyFromHash(cand.hash);
+                        const ivPass = hexToBuffer(backupObj.envelopePassword.iv);
+                        const encKeyBytes = hexToBuffer(backupObj.envelopePassword.key);
+                        const decKeyBytes = await crypto.subtle.decrypt(
+                            { name: 'AES-GCM', iv: ivPass },
+                            passAesKey,
+                            encKeyBytes
+                        );
+                        dataAesKey = await crypto.subtle.importKey(
+                            'raw',
+                            decKeyBytes,
+                            { name: 'AES-GCM' },
+                            false,
+                            ['decrypt']
+                        );
+                    } catch (e) {
+                        // continua tentando
+                    }
+                }
 
-            const dec = new TextDecoder();
-            const jsonString = dec.decode(decryptedBuffer);
-            const parsed = JSON.parse(jsonString);
-            return {
-                data: parsed,
-                isLegacy: false,
-                isEncrypted: true,
-                sameVault: Boolean(auth && auth.vaultId && auth.vaultId === backupObj.vaultId)
-            };
-        } catch (err) {
-            throw new Error('DECRYPTION_FAILED');
+                if (!dataAesKey && backupObj.envelopeRecovery && (cand.type === 'recovery' || cand.type === 'recovery_salt')) {
+                    try {
+                        const recAesKey = await getAesKeyFromHash(cand.hash);
+                        const ivRec = hexToBuffer(backupObj.envelopeRecovery.iv);
+                        const encKeyBytes = hexToBuffer(backupObj.envelopeRecovery.key);
+                        const decKeyBytes = await crypto.subtle.decrypt(
+                            { name: 'AES-GCM', iv: ivRec },
+                            recAesKey,
+                            encKeyBytes
+                        );
+                        dataAesKey = await crypto.subtle.importKey(
+                            'raw',
+                            decKeyBytes,
+                            { name: 'AES-GCM' },
+                            false,
+                            ['decrypt']
+                        );
+                    } catch (e) {
+                        // continua tentando
+                    }
+                }
+
+                // Fallback para V1 (onde o payload era criptografado diretamente com o hash)
+                if (!dataAesKey) {
+                    dataAesKey = await getAesKeyFromHash(cand.hash);
+                }
+
+                const iv = hexToBuffer(backupObj.iv);
+                const ciphertext = hexToBuffer(backupObj.payload);
+                const decryptedBuffer = await crypto.subtle.decrypt(
+                    { name: 'AES-GCM', iv: iv },
+                    dataAesKey,
+                    ciphertext
+                );
+
+                const dec = new TextDecoder();
+                const jsonString = dec.decode(decryptedBuffer);
+                const parsed = JSON.parse(jsonString);
+
+                return {
+                    data: parsed,
+                    isLegacy: false,
+                    isEncrypted: true,
+                    sameVault: Boolean(auth && auth.vaultId && auth.vaultId === backupObj.vaultId),
+                    publicKey: backupObj.publicKey || null,
+                    vaultId: backupObj.vaultId || null
+                };
+            } catch (err) {
+                // Tenta o próximo candidato
+            }
         }
+
+        throw new Error('DECRYPTION_FAILED');
+    }
+
+    // Restaura a conta e dados a partir de um backup
+    async function restoreAccountFromBackup(backupObj, passwordOrRecoveryKey, newPassword = null) {
+        const decrypted = await decryptBackup(backupObj, passwordOrRecoveryKey);
+        
+        // Se a conta ainda não tem senha configurada neste navegador ou está restaurando:
+        const cleanInput = normalizeKey(passwordOrRecoveryKey);
+        const finalRecovery = cleanInput.length === 16 ? cleanInput : generateRecoveryKey();
+        const finalPassword = newPassword || (cleanInput.length !== 16 ? passwordOrRecoveryKey : '1234');
+        
+        await setupMasterPassword(
+            finalPassword,
+            finalRecovery,
+            backupObj.publicKey || decrypted.publicKey,
+            backupObj.vaultId || decrypted.vaultId
+        );
+
+        return decrypted;
     }
 
     // Gera um PIN numérico aleatório de 4 dígitos usando CSPRNG para compartilhamento
@@ -455,10 +628,31 @@
         setSessionActive(false);
     }
 
+    // Exclui a conta, credenciais e chaves criptográficas do armazenamento local
+    function deleteAccount() {
+        try {
+            if (typeof SecureStorage !== 'undefined') {
+                SecureStorage.removeItem(AUTH_STORAGE_KEY);
+                SecureStorage.removeItem('loanManagerData');
+                SecureStorage.removeItem('loanManagerDataBackupBeforeImport');
+                SecureStorage.removeItem('loanManagerDataBackupBeforeV3');
+            }
+            localStorage.removeItem(AUTH_STORAGE_KEY);
+            localStorage.removeItem('loanManagerData');
+            localStorage.removeItem('loanManagerDataBackupBeforeImport');
+            localStorage.removeItem('loanManagerDataBackupBeforeV3');
+            sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        } catch (e) {
+            console.error('Erro ao excluir conta:', e);
+        }
+    }
+
     return Object.freeze({
         hasMasterPassword,
         generateRecoveryKey,
         generatePublicKey,
+        derivePublicKeyFromRecoveryKey,
+        deriveVaultIdFromRecoveryKey,
         getPublicKey,
         generateSharePin,
         setupMasterPassword,
@@ -467,10 +661,12 @@
         changePassword,
         encryptBackup,
         decryptBackup,
+        restoreAccountFromBackup,
         encryptClientBackup,
         decryptClientBackup,
         isSessionActive,
         setSessionActive,
-        logout
+        logout,
+        deleteAccount
     });
 });

@@ -12,6 +12,19 @@
             const [historicalInterestAllocations, setHistoricalInterestAllocations] = useState([]);
             const [isHydrated, setIsHydrated] = useState(false);
 
+            // Estados para Gestão de Conta e Exclusão
+            const [showAccountModal, setShowAccountModal] = useState(false);
+            const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+            const [deleteConfirmText, setDeleteConfirmText] = useState('');
+            const [copiedPublicKey, setCopiedPublicKey] = useState(false);
+
+            const [currentPassInput, setCurrentPassInput] = useState('');
+            const [newPassInput, setNewPassInput] = useState('');
+            const [confirmNewPassInput, setConfirmNewPassInput] = useState('');
+            const [changePassError, setChangePassError] = useState('');
+            const [changePassSuccess, setChangePassSuccess] = useState('');
+            const [isChangingPass, setIsChangingPass] = useState(false);
+
             const getSourceSummary = (sourceId) => FinanceEngine.getSourceSummary({
                 sourceId,
                 capitalSources,
@@ -406,6 +419,62 @@
                 }
             };
 
+            // Alterar Senha Mestra
+            const handleChangePasswordSubmit = async (e) => {
+                e.preventDefault();
+                setChangePassError('');
+                setChangePassSuccess('');
+                if (!currentPassInput) {
+                    setChangePassError('Digite a sua senha mestra atual.');
+                    return;
+                }
+                if (!newPassInput || newPassInput.length < 4) {
+                    setChangePassError('A nova senha deve ter no mínimo 4 caracteres.');
+                    return;
+                }
+                if (newPassInput !== confirmNewPassInput) {
+                    setChangePassError('A confirmação da nova senha não confere.');
+                    return;
+                }
+                setIsChangingPass(true);
+                try {
+                    await LocalAuth.changePassword(currentPassInput, newPassInput);
+                    setChangePassSuccess('✅ Senha mestra alterada com sucesso!');
+                    setCurrentPassInput('');
+                    setNewPassInput('');
+                    setConfirmNewPassInput('');
+                    showToast('🔒 Senha mestra atualizada com sucesso!');
+                } catch (err) {
+                    setChangePassError(err.message || 'Erro ao alterar senha.');
+                } finally {
+                    setIsChangingPass(false);
+                }
+            };
+
+            // Excluir Conta e Dados do Dispositivo
+            const handleDeleteAccountConfirmed = () => {
+                if (deleteConfirmText.trim().toUpperCase() !== 'EXCLUIR') {
+                    showToast('❌ Digite EXCLUIR para confirmar.');
+                    return;
+                }
+                if (typeof LocalAuth !== 'undefined') {
+                    LocalAuth.deleteAccount();
+                }
+                setFundsTransactions([]);
+                setClients([]);
+                setSelectedClient(null);
+                setCapitalSources([]);
+                setBankPayments([]);
+                setHistoricalInterestAllocations([]);
+                setSuppliers([]);
+                setSelectedSupplier(null);
+                setShowDeleteAccountModal(false);
+                setShowAccountModal(false);
+                setDeleteConfirmText('');
+                setIsAuthenticated(false);
+                showToast('🗑️ Sua conta e todos os dados foram excluídos com sucesso.');
+            };
+
 
             const referenceDate = FinanceEngine.localIsoDate(new Date());
             const globalStats = useMemo(() => FinanceEngine.calculateGlobalStats({
@@ -430,20 +499,34 @@
                     <div className="bg-white pt-10 pb-4 px-6 shadow-sm z-0 flex items-center justify-between">
                         <h1 className="text-2xl font-black text-gray-800 tracking-tight">Finanças <span className="text-blue-600">Pro</span></h1>
                         {typeof LocalAuth !== 'undefined' && (
-                            <button
-                                onClick={() => {
-                                    LocalAuth.logout();
-                                    setIsAuthenticated(false);
-                                    if (LocalAuth.hasMasterPassword()) {
-                                        showToast('🔒 Aplicativo bloqueado!');
-                                    }
-                                }}
-                                title={LocalAuth.hasMasterPassword() ? 'Bloquear aplicativo' : 'Configurar Senha Mestra'}
-                                className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 px-3 py-1.5 rounded-xl border border-slate-200 transition-all shadow-xs"
-                            >
-                                <span>🔒</span>
-                                <span className="font-semibold">{LocalAuth.hasMasterPassword() ? 'Bloquear' : 'Configurar Senha'}</span>
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => {
+                                        setShowAccountModal(true);
+                                        setChangePassError('');
+                                        setChangePassSuccess('');
+                                    }}
+                                    title="Configurações da Conta e Segurança"
+                                    className="flex items-center gap-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 px-3 py-1.5 rounded-xl border border-slate-200 transition-all shadow-xs"
+                                >
+                                    <span>⚙️</span>
+                                    <span className="font-semibold">Conta</span>
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        LocalAuth.logout();
+                                        setIsAuthenticated(false);
+                                        if (LocalAuth.hasMasterPassword()) {
+                                            showToast('🔒 Aplicativo bloqueado!');
+                                        }
+                                    }}
+                                    title={LocalAuth.hasMasterPassword() ? 'Bloquear aplicativo' : 'Configurar Senha Mestra'}
+                                    className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 px-3 py-1.5 rounded-xl border border-slate-200 transition-all shadow-xs"
+                                >
+                                    <span>🔒</span>
+                                    <span className="font-semibold">{LocalAuth.hasMasterPassword() ? 'Bloquear' : 'Configurar Senha'}</span>
+                                </button>
+                            </div>
                         )}
                     </div>
                     <div className="flex bg-white px-2 sm:px-4 border-b border-gray-200 overflow-x-auto hide-scroll" role="navigation" aria-label="Navegação principal">
@@ -910,6 +993,193 @@
                                         </button>
                                     </div>
                                 </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL 4: GERENCIAR CONTA E SEGURANÇA */}
+                    {showAccountModal && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 animate-scale-in space-y-4 max-h-[90vh] overflow-y-auto hide-scroll">
+                                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                                    <div className="flex items-center gap-2.5">
+                                        <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl">
+                                            🛡️
+                                        </div>
+                                        <div>
+                                            <h3 className="font-bold text-slate-900 text-base">Minha Conta & Segurança</h3>
+                                            <p className="text-xs text-slate-500">Cofre e chaves criptográficas</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAccountModal(false)}
+                                        className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center text-sm font-bold transition-colors"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+
+                                {/* Bloco 1: Chave Pública da Conta */}
+                                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-[11px] font-bold uppercase text-slate-600">
+                                            🌐 Sua Chave Pública
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const pub = LocalAuth.getPublicKey();
+                                                if (pub) {
+                                                    navigator.clipboard.writeText(pub);
+                                                    setCopiedPublicKey(true);
+                                                    showToast('📋 Chave pública copiada!');
+                                                    setTimeout(() => setCopiedPublicKey(false), 2500);
+                                                }
+                                            }}
+                                            className="text-xs bg-white border border-slate-300 px-2.5 py-1 rounded-lg text-slate-700 hover:bg-slate-100 font-bold"
+                                        >
+                                            {copiedPublicKey ? '✓ Copiada' : 'Copiar'}
+                                        </button>
+                                    </div>
+                                    <p className="font-mono font-bold text-slate-800 text-xs bg-white p-2.5 rounded-xl border border-slate-200 break-all select-all">
+                                        {LocalAuth.getPublicKey() || 'Não disponível'}
+                                    </p>
+                                    <p className="text-[10px] text-slate-500 leading-tight">
+                                        Compartilhe esta chave com seus fornecedores para que eles enviem pacotes de contratos criptografados para você.
+                                    </p>
+                                </div>
+
+                                {/* Bloco 2: Alterar Senha Mestra */}
+                                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                                    <h4 className="text-[11px] font-bold uppercase text-slate-700">
+                                        🔒 Alterar Senha Mestra
+                                    </h4>
+                                    <form onSubmit={handleChangePasswordSubmit} className="space-y-2.5">
+                                        <input
+                                            type="password"
+                                            value={currentPassInput}
+                                            onChange={(e) => setCurrentPassInput(e.target.value)}
+                                            placeholder="Senha Mestra Atual"
+                                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                        <input
+                                            type="password"
+                                            value={newPassInput}
+                                            onChange={(e) => setNewPassInput(e.target.value)}
+                                            placeholder="Nova Senha (mínimo 4 caracteres)"
+                                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                        <input
+                                            type="password"
+                                            value={confirmNewPassInput}
+                                            onChange={(e) => setConfirmNewPassInput(e.target.value)}
+                                            placeholder="Confirmar Nova Senha"
+                                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+
+                                        {changePassError && (
+                                            <p className="text-xs text-red-600 font-medium bg-red-50 p-2 rounded-lg border border-red-200">
+                                                {changePassError}
+                                            </p>
+                                        )}
+                                        {changePassSuccess && (
+                                            <p className="text-xs text-emerald-700 font-medium bg-emerald-50 p-2 rounded-lg border border-emerald-200">
+                                                {changePassSuccess}
+                                            </p>
+                                        )}
+
+                                        <button
+                                            type="submit"
+                                            disabled={isChangingPass}
+                                            className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-sm transition-colors disabled:opacity-50"
+                                        >
+                                            {isChangingPass ? 'Atualizando...' : 'Atualizar Senha'}
+                                        </button>
+                                    </form>
+                                </div>
+
+                                {/* Bloco 3: Zona de Perigo (Excluir Conta) */}
+                                <div className="p-3.5 bg-red-50/70 border border-red-200 rounded-2xl space-y-2">
+                                    <div className="flex items-center gap-1.5 text-red-700 font-bold text-xs uppercase">
+                                        <span>⚠️</span>
+                                        <span>Zona de Perigo</span>
+                                    </div>
+                                    <p className="text-[11px] text-red-800 leading-relaxed">
+                                        Exclui permanentemente a senha mestra, a chave pública e todos os dados financeiros locais (clientes, empréstimos, fornecedores) deste navegador.
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setShowDeleteAccountModal(true);
+                                            setDeleteConfirmText('');
+                                        }}
+                                        className="w-full py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors"
+                                    >
+                                        🗑️ Excluir Minha Conta deste Dispositivo
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL 5: CONFIRMAÇÃO DE EXCLUSÃO DE CONTA */}
+                    {showDeleteAccountModal && (
+                        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-red-100 animate-scale-in space-y-4 text-center">
+                                <div className="w-12 h-12 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center text-2xl mx-auto">
+                                    🗑️
+                                </div>
+
+                                <div>
+                                    <h3 className="font-bold text-slate-900 text-lg">Excluir Minha Conta?</h3>
+                                    <p className="text-xs text-slate-500 mt-0.5">Esta ação apagará todos os dados locais</p>
+                                </div>
+
+                                <div className="p-3.5 bg-red-50 border border-red-200 rounded-2xl text-left text-xs text-red-900 space-y-2 leading-relaxed">
+                                    <p className="font-bold">⚠️ Tem certeza absoluta?</p>
+                                    <p>
+                                        Seus contratos, clientes, fornecedores e chave pública serão apagados da memória deste navegador.
+                                    </p>
+                                    <p className="text-[10px] text-red-700 font-semibold">
+                                        💡 Dica: Exporte um backup (.json) antes de prosseguir se desejar manter uma cópia de segurança.
+                                    </p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5 text-left">
+                                        Digite <span className="text-red-600 font-black">EXCLUIR</span> para confirmar:
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={deleteConfirmText}
+                                        onChange={(e) => setDeleteConfirmText(e.target.value.toUpperCase())}
+                                        placeholder="EXCLUIR"
+                                        autoFocus
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-center font-bold tracking-widest text-slate-900 uppercase focus:outline-none focus:ring-2 focus:ring-red-500 text-sm"
+                                    />
+                                </div>
+
+                                <div className="flex gap-2 pt-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setShowDeleteAccountModal(false);
+                                            setDeleteConfirmText('');
+                                        }}
+                                        className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleDeleteAccountConfirmed}
+                                        disabled={deleteConfirmText.trim().toUpperCase() !== 'EXCLUIR'}
+                                        className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded-xl font-bold text-xs shadow-md transition-colors disabled:opacity-40"
+                                    >
+                                        Excluir Conta
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     )}
