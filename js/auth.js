@@ -278,6 +278,18 @@
         );
     }
 
+    // Gera hash determinístico da chave de recuperação para criptografia universal de backup
+    async function getDeterministicRecoveryHash(cleanRecoveryKey) {
+        const cleanKey = normalizeKey(cleanRecoveryKey);
+        if (!cleanKey || cleanKey.length !== 16) return null;
+        const enc = new TextEncoder();
+        const hashBuffer = await crypto.subtle.digest(
+            'SHA-256',
+            enc.encode(`${cleanKey}_FINANCAS_PRO_RECOVERY_VAULT_SEED_V2`)
+        );
+        return bufferToHex(hashBuffer);
+    }
+
     async function encryptBackup(plainDataObject) {
         const auth = getStoredAuth();
         if (!auth || !auth.passwordHash) {
@@ -359,29 +371,50 @@
         const targetSalt = backupObj.salt || (auth ? auth.salt : null);
         const targetRecoverySalt = backupObj.recoverySalt || (auth ? auth.recoverySalt : null);
 
-        // Lista de possíveis hashes para tentar descriptografar
+        // Lista de possíveis hashes e envelopes para tentar descriptografar
         const candidates = [];
 
         if (overridePassword) {
             const rawInput = String(overridePassword).trim();
             const cleanKey = normalizeKey(rawInput);
 
-            // 1. Tentar como senha mestra direta com targetSalt
-            if (targetSalt) {
-                const passHash = await pbkdf2Hash(rawInput, targetSalt);
-                candidates.push({ hash: passHash, type: 'password' });
-            }
-
-            // 2. Se tiver 16 caracteres, tentar como chave de recuperação
+            // 1. Se o input tem formato de chave de recuperação (16 caracteres alfanuméricos)
             if (cleanKey.length === 16) {
+                // Testar com recoverySalt do backup
                 if (targetRecoverySalt) {
                     const recHash = await pbkdf2Hash(cleanKey, targetRecoverySalt);
                     candidates.push({ hash: recHash, type: 'recovery' });
                 }
+                // Testar com salt geral do backup
                 if (targetSalt) {
                     const recSaltHash = await pbkdf2Hash(cleanKey, targetSalt);
                     candidates.push({ hash: recSaltHash, type: 'recovery_salt' });
                 }
+                // Testar com hash determinístico
+                const detHash = await getDeterministicRecoveryHash(cleanKey);
+                if (detHash) {
+                    candidates.push({ hash: detHash, type: 'recovery_det' });
+                }
+                // Testar rawInput com targetRecoverySalt se diferente de cleanKey
+                if (targetRecoverySalt && rawInput !== cleanKey) {
+                    const recRawHash = await pbkdf2Hash(rawInput, targetRecoverySalt);
+                    candidates.push({ hash: recRawHash, type: 'recovery' });
+                }
+                // Testar como senha mestra direta do cleanKey
+                if (targetSalt) {
+                    const passCleanHash = await pbkdf2Hash(cleanKey, targetSalt);
+                    candidates.push({ hash: passCleanHash, type: 'password' });
+                }
+            }
+
+            // 2. Tentar como senha mestra direta com targetSalt
+            if (targetSalt) {
+                const passHash = await pbkdf2Hash(rawInput, targetSalt);
+                candidates.push({ hash: passHash, type: 'password' });
+            }
+            if (targetRecoverySalt) {
+                const passRecHash = await pbkdf2Hash(rawInput, targetRecoverySalt);
+                candidates.push({ hash: passRecHash, type: 'password' });
             }
         } else if (auth && auth.passwordHash) {
             candidates.push({ hash: auth.passwordHash, type: 'session_pass' });
@@ -392,35 +425,13 @@
             throw new Error('NEEDS_PASSWORD_AUTH');
         }
 
-        // Tenta descriptografar usando os envelopes V2 ou método direto V1
+        // Tenta descriptografar usando os envelopes e candidatos
         for (const cand of candidates) {
             try {
                 let dataAesKey = null;
 
-                // Se o backup tiver envelopes V2
-                if (backupObj.envelopePassword && cand.type !== 'recovery' && cand.type !== 'recovery_salt') {
-                    try {
-                        const passAesKey = await getAesKeyFromHash(cand.hash);
-                        const ivPass = hexToBuffer(backupObj.envelopePassword.iv);
-                        const encKeyBytes = hexToBuffer(backupObj.envelopePassword.key);
-                        const decKeyBytes = await crypto.subtle.decrypt(
-                            { name: 'AES-GCM', iv: ivPass },
-                            passAesKey,
-                            encKeyBytes
-                        );
-                        dataAesKey = await crypto.subtle.importKey(
-                            'raw',
-                            decKeyBytes,
-                            { name: 'AES-GCM' },
-                            false,
-                            ['decrypt']
-                        );
-                    } catch (e) {
-                        // continua tentando
-                    }
-                }
-
-                if (!dataAesKey && backupObj.envelopeRecovery && (cand.type === 'recovery' || cand.type === 'recovery_salt')) {
+                // Tentar descriptografar o envelope de recuperação
+                if (backupObj.envelopeRecovery) {
                     try {
                         const recAesKey = await getAesKeyFromHash(cand.hash);
                         const ivRec = hexToBuffer(backupObj.envelopeRecovery.iv);
@@ -438,11 +449,34 @@
                             ['decrypt']
                         );
                     } catch (e) {
-                        // continua tentando
+                        // Envelope de recuperação não abriu com esta chave, tenta o próximo
                     }
                 }
 
-                // Fallback para V1 (onde o payload era criptografado diretamente com o hash)
+                // Tentar descriptografar o envelope de senha
+                if (!dataAesKey && backupObj.envelopePassword) {
+                    try {
+                        const passAesKey = await getAesKeyFromHash(cand.hash);
+                        const ivPass = hexToBuffer(backupObj.envelopePassword.iv);
+                        const encKeyBytes = hexToBuffer(backupObj.envelopePassword.key);
+                        const decKeyBytes = await crypto.subtle.decrypt(
+                            { name: 'AES-GCM', iv: ivPass },
+                            passAesKey,
+                            encKeyBytes
+                        );
+                        dataAesKey = await crypto.subtle.importKey(
+                            'raw',
+                            decKeyBytes,
+                            { name: 'AES-GCM' },
+                            false,
+                            ['decrypt']
+                        );
+                    } catch (e) {
+                        // Envelope de senha não abriu com esta chave, tenta o próximo
+                    }
+                }
+
+                // Fallback para formato direto V1 (onde o payload era criptografado diretamente com o hash)
                 if (!dataAesKey) {
                     dataAesKey = await getAesKeyFromHash(cand.hash);
                 }

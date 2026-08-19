@@ -127,6 +127,7 @@
             const [encryptedImportPending, setEncryptedImportPending] = useState(null);
             const [backupPasswordInput, setBackupPasswordInput] = useState('');
             const [backupPasswordError, setBackupPasswordError] = useState('');
+            const [showBackupPassword, setShowBackupPassword] = useState(false);
 
             // Estados para Backup Exclusivo de Cliente
             const [clientBackupModal, setClientBackupModal] = useState(null);
@@ -628,24 +629,32 @@
                                     </div>
                                     <div>
                                         <h3 className="font-bold text-gray-900 text-base">Backup Protegido</h3>
-                                        <p className="text-xs text-gray-500">Arquivo criptografado por senha</p>
+                                        <p className="text-xs text-gray-500">Arquivo criptografado</p>
                                     </div>
                                 </div>
 
                                 <p className="text-xs text-gray-600 leading-relaxed">
-                                    Este arquivo foi exportado com proteção de outra conta ou senha diferente. Digite a senha mestra ou chave de recuperação usada para criá-lo:
+                                    Cole a sua <strong>Chave de Recuperação de 16 caracteres</strong> (ou digite a senha mestra) usada na criação deste backup:
                                 </p>
 
                                 <form onSubmit={handleDecryptExternalBackup} className="space-y-3">
-                                    <div>
+                                    <div className="relative">
                                         <input
-                                            type="password"
+                                            type={showBackupPassword ? "text" : "password"}
                                             value={backupPasswordInput}
                                             onChange={(e) => setBackupPasswordInput(e.target.value)}
-                                            placeholder="Senha mestra ou Chave de Recuperação"
-                                            className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                            placeholder="Cole a Chave de Recuperação ou Senha"
+                                            className="w-full pl-3.5 pr-10 py-2.5 border border-gray-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono"
                                             autoFocus
                                         />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowBackupPassword(prev => !prev)}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 text-sm"
+                                            title={showBackupPassword ? "Ocultar" : "Mostrar"}
+                                        >
+                                            {showBackupPassword ? "🙈" : "👁️"}
+                                        </button>
                                     </div>
 
                                     {backupPasswordError && (
@@ -661,6 +670,7 @@
                                                 setEncryptedImportPending(null);
                                                 setBackupPasswordInput('');
                                                 setBackupPasswordError('');
+                                                setShowBackupPassword(false);
                                             }}
                                             className="flex-1 py-2.5 px-3 rounded-xl border border-gray-300 text-gray-700 font-semibold text-xs hover:bg-gray-100 transition-colors"
                                         >
