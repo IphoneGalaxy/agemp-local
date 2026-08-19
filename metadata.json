@@ -1,0 +1,6 @@
+{
+  "name": "Controle de Empréstimos Pro",
+  "description": "Sistema de gestão financeira e controle de empréstimos, fontes de capital e clientes",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

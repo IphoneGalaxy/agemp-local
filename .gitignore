@@ -1,0 +1,6 @@
+.playwright-mcp/
+*.log
+backup_financas_*.txt
+*.code-workspace
+node_modules/
+dist/
