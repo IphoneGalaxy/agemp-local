@@ -500,7 +500,7 @@
                                             type="text"
                                             value={recoveryKey}
                                             onChange={(e) => setRecoveryKey(e.target.value.toUpperCase())}
-                                            placeholder="Ex: VZLD-GBKP-76Q4-BZUF"
+                                            placeholder="Ex: ABCD-1234-EFGH-5678"
                                             autoFocus
                                             className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono font-bold text-slate-800 uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
                                         />
@@ -617,7 +617,7 @@
                                     type="text"
                                     value={recoveryKey}
                                     onChange={(e) => setRecoveryKey(e.target.value.toUpperCase())}
-                                    placeholder="Ex: VZLD-GBKP-76Q4-BZUF"
+                                    placeholder="Ex: ABCD-1234-EFGH-5678"
                                     autoFocus
                                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono text-slate-800 uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
