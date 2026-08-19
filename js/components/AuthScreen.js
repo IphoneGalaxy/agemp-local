@@ -6,7 +6,7 @@
 
     const AuthScreen = ({ onAuthenticated, showToast }) => {
         const [mode, setMode] = useState(() => (LocalAuth.hasMasterPassword() ? 'login' : 'setup'));
-        const [setupTab, setSetupTab] = useState('new'); // 'new' | 'existing_key' | 'backup'
+        const [setupTab, setSetupTab] = useState('new'); // 'new' | 'existing_key'
         const [password, setPassword] = useState('');
         const [confirmPassword, setConfirmPassword] = useState('');
         const [showPassword, setShowPassword] = useState(false);
@@ -17,12 +17,6 @@
         const [isLoading, setIsLoading] = useState(false);
         const [errorMessage, setErrorMessage] = useState('');
         const [newGeneratedKeyAfterReset, setNewGeneratedKeyAfterReset] = useState('');
-        
-        // Estado para restauração direta de backup
-        const [backupFileData, setBackupFileData] = useState(null);
-        const [backupFileName, setBackupFileName] = useState('');
-        const [backupPassword, setBackupPassword] = useState('');
-        const [showBackupPassword, setShowBackupPassword] = useState(false);
 
         const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
         const [deleteConfirmationWord, setDeleteConfirmationWord] = useState('');
@@ -117,57 +111,6 @@
             }
         };
 
-        const handleBackupFileSelect = (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            setErrorMessage('');
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                try {
-                    const parsed = JSON.parse(event.target.result);
-                    setBackupFileData(parsed);
-                    setBackupFileName(file.name);
-                } catch (err) {
-                    setErrorMessage('Arquivo inválido. Certifique-se de selecionar um arquivo .json de backup.');
-                }
-            };
-            reader.readAsText(file);
-        };
-
-        const handleRestoreBackupSubmit = async (e) => {
-            e.preventDefault();
-            setErrorMessage('');
-            if (!backupFileData) {
-                setErrorMessage('Selecione um arquivo de backup (.json).');
-                return;
-            }
-            if (!backupPassword.trim()) {
-                setErrorMessage('Digite a Senha Mestra ou a Chave de Recuperação da conta.');
-                return;
-            }
-
-            setIsLoading(true);
-            try {
-                const decrypted = await LocalAuth.restoreAccountFromBackup(backupFileData, backupPassword.trim());
-                
-                // Grava os dados de clientes, empréstimos e fornecedores no storage
-                if (decrypted && decrypted.data) {
-                    const payloadStr = JSON.stringify(decrypted.data);
-                    if (typeof SecureStorage !== 'undefined') {
-                        SecureStorage.setItem('loanManagerData', payloadStr);
-                    } else {
-                        localStorage.setItem('loanManagerData', payloadStr);
-                    }
-                }
-                if (showToast) showToast('🎉 Backup e conta restaurados com sucesso!');
-                onAuthenticated();
-            } catch (err) {
-                setErrorMessage('Senha ou chave de recuperação incorreta para este backup.');
-            } finally {
-                setIsLoading(false);
-            }
-        };
-
         const handleLogin = async (e) => {
             e.preventDefault();
             setErrorMessage('');
@@ -226,13 +169,13 @@
                     {/* Header com Ícone */}
                     <div className="text-center mb-5">
                         <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-2 text-2xl shadow-inner">
-                            {mode === 'setup' ? (setupTab === 'backup' ? '📥' : setupTab === 'existing_key' ? '🔑' : '🛡️') : mode === 'recovery' ? '🔑' : '🔒'}
+                            {mode === 'setup' ? (setupTab === 'existing_key' ? '🔑' : '🛡️') : mode === 'recovery' ? '🔑' : '🔒'}
                         </div>
                         <h1 className="text-2xl font-black text-slate-800 tracking-tight">
                             Finanças <span className="text-blue-600">Pro</span>
                         </h1>
                         <p className="text-xs text-slate-500 mt-0.5">
-                            {mode === 'setup' && (setupTab === 'backup' ? 'Restaurar Conta a partir de Backup' : setupTab === 'existing_key' ? 'Entrar com Chave de Recuperação' : 'Configuração de Segurança Inicial')}
+                            {mode === 'setup' && (setupTab === 'existing_key' ? 'Entrar com Chave de Recuperação' : 'Configuração de Segurança Inicial')}
                             {mode === 'login' && 'Cofre Local Bloqueado'}
                             {mode === 'recovery' && 'Recuperação de Acesso'}
                             {mode === 'recovery_success' && 'Acesso Recuperado com Sucesso'}
@@ -280,7 +223,7 @@
                                 {isLoading ? 'Verificando...' : '🔓 Desbloquear App'}
                             </button>
 
-                            <div className="pt-2 flex items-center justify-between text-xs font-semibold">
+                            <div className="pt-2 text-center text-xs font-semibold">
                                 <button
                                     type="button"
                                     onClick={() => {
@@ -292,17 +235,6 @@
                                     className="text-blue-600 hover:text-blue-800 underline underline-offset-2"
                                 >
                                     Esqueci minha senha
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setMode('setup');
-                                        setSetupTab('backup');
-                                        setErrorMessage('');
-                                    }}
-                                    className="text-slate-500 hover:text-slate-700"
-                                >
-                                    📥 Restaurar outro backup
                                 </button>
                             </div>
 
@@ -344,7 +276,7 @@
                                         <li>Todos os clientes e dados salvos neste navegador serão removidos.</li>
                                     </ul>
                                     <p className="text-[10px] text-red-700 font-semibold pt-1">
-                                        💡 Se você tiver um arquivo de backup guardado, poderá restaurá-lo depois com sua chave de recuperação.
+                                        💡 Se você tiver um arquivo de backup guardado, poderá restaurá-lo depois com sua chave de recuperação dentro do aplicativo.
                                     </p>
                                 </div>
 
@@ -386,11 +318,11 @@
                         </div>
                     )}
 
-                    {/* MODO 2: SETUP INICIAL / ENTRADA COM CHAVE / RESTAURAR BACKUP */}
+                    {/* MODO 2: SETUP INICIAL / ENTRADA COM CHAVE */}
                     {mode === 'setup' && (
                         <div className="space-y-4">
                             {/* Segmented Control / Tabs */}
-                            <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-2xl text-[11px] font-bold text-slate-600">
+                            <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-2xl text-[11px] font-bold text-slate-600">
                                 <button
                                     type="button"
                                     onClick={() => { setSetupTab('new'); setErrorMessage(''); }}
@@ -404,13 +336,6 @@
                                     className={`py-2 rounded-xl transition-all ${setupTab === 'existing_key' ? 'bg-white text-blue-600 shadow-sm font-black' : 'hover:text-slate-900'}`}
                                 >
                                     🔑 Tenho Chave
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => { setSetupTab('backup'); setErrorMessage(''); }}
-                                    className={`py-2 rounded-xl transition-all ${setupTab === 'backup' ? 'bg-white text-blue-600 shadow-sm font-black' : 'hover:text-slate-900'}`}
-                                >
-                                    📥 Backup (.json)
                                 </button>
                             </div>
 
@@ -538,64 +463,6 @@
                                         className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold py-3 rounded-xl text-sm shadow-md transition-all disabled:opacity-50 mt-2"
                                     >
                                         {isLoading ? 'Vinculando...' : '🔑 Entrar com Minha Conta'}
-                                    </button>
-                                </form>
-                            )}
-
-                            {/* ABA 3: RESTAURAR ARQUIVO DE BACKUP (.JSON) */}
-                            {setupTab === 'backup' && (
-                                <form onSubmit={handleRestoreBackupSubmit} className="space-y-3.5">
-                                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 leading-relaxed">
-                                        📥 Selecione o seu arquivo de backup exportado (<code>.json</code>) para restaurar sua conta, chave pública e todos os seus clientes/empréstimos.
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                                            Arquivo de Backup (.json)
-                                        </label>
-                                        <label className="flex flex-col items-center justify-center p-3.5 bg-slate-50 border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl cursor-pointer transition-all text-center">
-                                            <span className="text-xl mb-1">📁</span>
-                                            <span className="text-xs font-bold text-slate-700 truncate max-w-xs">
-                                                {backupFileName ? backupFileName : 'Clique para selecionar o arquivo .json'}
-                                            </span>
-                                            <span className="text-[10px] text-slate-400 mt-0.5">FINANCAS_PRO_*.json</span>
-                                            <input
-                                                type="file"
-                                                accept=".json"
-                                                onChange={handleBackupFileSelect}
-                                                className="hidden"
-                                            />
-                                        </label>
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                                            Senha Mestra ou Chave de Recuperação
-                                        </label>
-                                        <div className="relative">
-                                            <input
-                                                type={showBackupPassword ? 'text' : 'password'}
-                                                value={backupPassword}
-                                                onChange={(e) => setBackupPassword(e.target.value)}
-                                                placeholder="Digite a senha ou código de 16 dígitos"
-                                                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 pr-10"
-                                            />
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowBackupPassword(!showBackupPassword)}
-                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-sm"
-                                            >
-                                                {showBackupPassword ? '🙈' : '👁️'}
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <button
-                                        type="submit"
-                                        disabled={isLoading || !backupFileData}
-                                        className="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold py-3 rounded-xl text-sm shadow-md transition-all disabled:opacity-50 mt-2 flex items-center justify-center gap-2"
-                                    >
-                                        {isLoading ? 'Descriptografando e Restaurando...' : '📥 Restaurar Conta e Dados'}
                                     </button>
                                 </form>
                             )}
