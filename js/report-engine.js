@@ -13,21 +13,23 @@
     const qualityLabel = value => ({ confirmed: 'Confirmado', estimated: 'Estimado', recalculated: 'Recalculado', review: 'Requer revisão' }[value] || value || 'Confirmado');
 
     const buildReport = ({ data = {}, filters = {}, sections = DEFAULT_SECTIONS, referenceDate } = {}) => {
+        if (filters.startDate && filters.endDate && filters.startDate > filters.endDate) throw new Error('A data inicial deve ser anterior ou igual à data final.');
         const normalized = FinanceEngine.migrateData(data);
         const planning = ProjectionEngine.buildPlanningModel({ ...normalized, referenceDate });
         const selectedSections = new Set(sections?.length ? sections : DEFAULT_SECTIONS);
         const loans = planning.loans.filter(row => included(row.clientId, filters.clientIds) && included(row.sourceId, filters.sourceIds));
         const loanIds = new Set(loans.map(row => row.id));
-        const banks = planning.banks.filter(row => included(row.sourceId, filters.sourceIds));
+        const banks = planning.banks.filter(row => included(row.sourceId, filters.sourceIds) && (!filters.clientIds?.length || loans.some(loan => loan.sourceId === row.sourceId)));
         const bankIds = new Set(banks.map(row => row.sourceId));
         const sheets = {};
 
         if (selectedSections.has('summary')) sheets.Resumo = [{
             'Data-base': planning.referenceDate,
-            'Total originalmente emprestado': planning.overview.originalLent,
+            'Total originalmente emprestado': loans.reduce((total, row) => total + row.originalPrincipal, 0),
             'Principal pendente': loans.reduce((total, row) => total + row.currentPrincipal, 0),
             'Juros recebidos': loans.reduce((total, row) => total + row.interestReceived, 0),
             'Juros mensais esperados': loans.filter(row => row.status === 'active').reduce((total, row) => total + row.monthlyInterest, 0),
+            'Saldo bancário oficial informado': banks.every(row => row.latestOfficialBalance !== null) ? banks.reduce((total, row) => total + Number(row.latestOfficialBalance || 0), 0) : 'Não informado para todos os bancos',
             'Total pago aos bancos': banks.reduce((total, row) => total + row.actualPaid, 0),
             'Custo bancário projetado': banks.reduce((total, row) => total + row.projectedCost, 0),
             'Economia projetada': banks.reduce((total, row) => total + row.projectedSavings, 0),
@@ -62,7 +64,7 @@
             }));
             if (selectedSections.has('receipts')) sheets.Recebimentos = receipts;
             if (selectedSections.has('transactions')) {
-                const funds = normalized.fundsTransactions.filter(row => included(row.sourceId, filters.sourceIds) && inPeriod(row.date, filters.startDate, filters.endDate)).map(row => ({
+                const funds = normalized.fundsTransactions.filter(row => !filters.clientIds?.length && included(row.sourceId, filters.sourceIds) && inPeriod(row.date, filters.startDate, filters.endDate)).map(row => ({
                     Data: row.date, Entidade: normalized.capitalSources.find(source => source.id === row.sourceId)?.name || '',
                     Tipo: 'Capital próprio', Valor: row.amount, Juros: 0, Principal: 0, Banco: '', Qualidade: 'Confirmado', Observações: row.description || ''
                 }));
@@ -94,7 +96,7 @@
         });
 
         if (selectedSections.has('installments')) sheets['Parcelas bancárias'] = normalized.capitalSources.filter(bank => bank.type === 'bank' && bankIds.has(bank.id)).flatMap(bank =>
-            FinanceEngine.buildInstallmentSchedule({ bank, bankPayments: normalized.bankPayments }).map(item => ({
+            FinanceEngine.buildInstallmentSchedule({ bank, bankPayments: normalized.bankPayments }).filter(item => inPeriod(item.dueDate, filters.startDate, filters.endDate)).map(item => ({
                 Banco: bank.name, Parcela: item.number, Vencimento: item.dueDate,
                 'Valor nominal': item.nominalAmount ?? item.amount, 'Valor presente': item.presentValue ?? '',
                 Situação: item.status, Qualidade: item.quality || 'Confirmado'
@@ -109,7 +111,7 @@
             Qualidade: 'Confirmado'
         }));
 
-        if (selectedSections.has('projections') && filters.includeEstimated !== false) sheets['Projeções'] = banks.flatMap(row => row.timeline.map(month => ({
+        if (selectedSections.has('projections') && filters.includeEstimated !== false) sheets['Projeções'] = banks.flatMap(row => row.timeline.filter(month => inPeriod(month.date, filters.startDate, filters.endDate)).map(month => ({
             Mês: month.month, Banco: row.bankName, 'Juros esperados': month.clientInterest,
             'Parcela normal': month.normalInstallment, Amortização: month.amortization,
             'Complemento próprio': month.ownCapital, Sobra: month.carryover,
@@ -128,12 +130,41 @@
             'Data-base': planning.referenceDate, Fonte: bank.importMetadata?.documentType || 'Cadastro manual'
         }));
 
-        if (selectedSections.has('alerts')) sheets.Alertas = FinanceEngine.findIntegrityIssues(normalized).map(issue => ({
+        if (selectedSections.has('alerts')) sheets.Alertas = FinanceEngine.findIntegrityIssues(normalized).filter(issue => (!filters.sourceIds?.length && !filters.clientIds?.length) || bankIds.has(issue.sourceId) || loanIds.has(issue.id)).map(issue => ({
             Tipo: issue.type, Registro: issue.id || '', Origem: issue.sourceId || '', 'Duplicado de': issue.duplicateOf || '',
             Orientação: 'Revisar no aplicativo; nenhum registro foi apagado automaticamente.'
         }));
 
-        return { planning, sheets, rowCount: Object.values(sheets).reduce((total, rows) => total + rows.length, 0), filters, sections: [...selectedSections] };
+        const receiptRows = [];
+        normalized.clients.forEach(client => (client.loans || []).forEach(loan => {
+            if (!loanIds.has(loan.id)) return;
+            FinanceEngine.calculateLoan(loan).processedPayments.forEach(payment => {
+                if (inPeriod(payment.date, filters.startDate, filters.endDate)) receiptRows.push(payment);
+            });
+        }));
+        const paidInPeriod = normalized.bankPayments.filter(payment => bankIds.has(payment.sourceId) && payment.status !== FinanceEngine.BANK_PAYMENT_STATUS.SCHEDULED && inPeriod(payment.date, filters.startDate, filters.endDate));
+        if (sheets.Resumo) Object.assign(sheets.Resumo[0], {
+            'Recebimentos no período': receiptRows.reduce((total, row) => total + Number(row.amount || 0), 0),
+            'Juros recebidos no período': receiptRows.reduce((total, row) => total + Number(row.interestPaid || 0), 0),
+            'Principal recuperado no período': receiptRows.reduce((total, row) => total + Number(row.amortized || 0), 0),
+            'Pagamentos bancários no período': paidInPeriod.reduce((total, row) => total + Number(row.amount || 0), 0),
+            'Quantidade de empréstimos': loans.length,
+            'Quantidade de bancos': banks.length
+        });
+        if (filters.includeEstimated === false) {
+            if (sheets.Resumo) ['Juros mensais esperados', 'Custo bancário projetado', 'Economia projetada'].forEach(key => delete sheets.Resumo[0][key]);
+            (sheets['Operações bancárias'] || []).forEach(row => ['Total final projetado', 'Custo projetado', 'Economia projetada', 'Quitação estimada', 'Resultado positivo', 'Livre após quitação'].forEach(key => delete row[key]));
+            if (sheets['Movimentações']) sheets['Movimentações'] = sheets['Movimentações'].filter(row => row.Qualidade !== 'Estimado');
+        }
+        const context = {
+            referenceDate: planning.referenceDate,
+            clients: normalized.clients.filter(client => included(client.id, filters.clientIds)).map(client => client.name).join(', '),
+            clientLabel: filters.clientIds?.length ? normalized.clients.filter(client => included(client.id, filters.clientIds)).map(client => client.name).join(', ') : 'Todos os clientes',
+            sourceLabel: filters.sourceIds?.length ? normalized.capitalSources.filter(source => included(source.id, filters.sourceIds)).map(source => source.name).join(', ') : 'Todas as origens',
+            periodLabel: `${filters.startDate || 'Desde o início'} até ${filters.endDate || 'sem limite final'}`,
+            notes: 'Saldos e totais acumulados refletem a data-base. O período filtra recebimentos, movimentações, amortizações, vencimentos e projeções. Valores futuros são estimativas, não pagamentos confirmados.' + (filters.clientIds?.length ? ' Custos e projeções dos bancos vinculados referem-se ao contrato inteiro, sem rateio por cliente.' : '')
+        };
+        return { planning, context, sheets, rowCount: Object.values(sheets).reduce((total, rows) => total + rows.length, 0), filters, sections: [...selectedSections] };
     };
 
     return Object.freeze({ DEFAULT_SECTIONS, buildReport, qualityLabel });
